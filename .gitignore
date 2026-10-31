@@ -1,0 +1,15 @@
+# Compiled binaries
+*.exe
+*.o
+*.obj
+
+# Logs and scratch files
+*.log
+
+# Python cache (if any)
+__pycache__/
+*.pyc
+
+# IDE / Editor folders
+.vscode/
+.idea/
