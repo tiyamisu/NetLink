@@ -3,216 +3,598 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NetLink | Pothole Network Demo</title>
+  <title>NetLink | TCP/UDP Pothole Reporting System</title>
+  <meta name="description" content="NetLink – A Computer Networks demonstration of TCP and UDP client-server communication using C Winsock for pothole reporting.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
-<body class="simple-app">
-  <main class="simple-main">
-    <header class="simple-header">
+<body>
+
+  <!-- Sidebar Navigation -->
+  <nav class="sidebar" id="sidebar" aria-label="Main navigation">
+    <div class="sidebar-brand">
+      <div class="brand-icon" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
       <div>
-        <p class="section-kicker">COMPUTER NETWORKS · C + WINSOCK</p>
-        <h1>NetLink Pothole Reports</h1>
-        <p>Multiple browser clients send reports to one central C server.</p>
+        <div class="brand-name">NetLink</div>
+        <div class="brand-sub">CNS AAT</div>
       </div>
-      <div class="simple-status">
-        <span id="statusDot" class="status-dot disconnected"></span>
-        <span id="statusText">Checking C server...</span>
-      </div>
-    </header>
-
-    <section class="network-panel" aria-labelledby="networkHeading">
-      <div class="network-panel-heading">
-        <div>
-          <h2 id="networkHeading">Network information</h2>
-          <p>Addresses and ports are shown from the C bridge/server configuration and live server response.</p>
-        </div>
-        <div class="network-actions">
-          <button id="refreshNetworkButton" class="secondary-button" type="button">Refresh network info</button>
-          <button id="tcpTestButton" class="primary-button" type="button">Run real TCP test</button>
-        </div>
-      </div>
-      <div class="network-facts">
-        <article><span>C server status</span><strong id="networkServerStatus">Checking...</strong></article>
-        <article><span>C server bind address</span><strong id="serverBindInfo">Loading...</strong></article>
-        <article><span>Browser / bridge address</span><strong id="bridgeAddressInfo">Loading...</strong></article>
-        <article><span>HTTP bridge port</span><strong id="httpPortInfo">Loading...</strong></article>
-        <article><span>TCP report port</span><strong id="tcpPortInfo">Loading...</strong></article>
-        <article><span>UDP alert port</span><strong id="udpPortInfo">Loading...</strong></article>
-        <article><span>Active TCP clients</span><strong id="activeClientsInfo">Loading...</strong></article>
-      </div>
-      <p class="network-explanation">0.0.0.0 means the C server listens on available network interfaces. This browser bridge connects to it through 127.0.0.1. The active-client count is measured by the server and includes the bridge's TCP connection.</p>
-      <p id="networkFeedback" class="feedback" aria-live="polite"></p>
-    </section>
-
-    <div class="protocol-columns">
-      <section class="protocol-column tcp-column" aria-labelledby="tcpHeading">
-        <div class="protocol-heading">
-          <span class="protocol-label tcp-label">TCP</span>
-          <div>
-            <h2 id="tcpHeading">Pothole reports</h2>
-            <p>Reliable connection: submit reports, receive IDs, and update status.</p>
-          </div>
-        </div>
-
-        <section class="simple-dashboard" aria-label="Report dashboard">
-          <div class="dashboard-title">
-            <h2>Report dashboard</h2>
-            <span>Live server data</span>
-          </div>
-          <div class="dashboard-metrics">
-            <article><span>Total reports</span><strong id="totalReportsMetric">0</strong></article>
-            <article><span>Critical priority</span><strong id="criticalReportsMetric">0</strong></article>
-            <article><span>Pending</span><strong id="pendingReportsMetric">0</strong></article>
-            <article><span>Under repair</span><strong id="inProgressReportsMetric">0</strong></article>
-            <article><span>Resolved</span><strong id="resolvedReportsMetric">0</strong></article>
-          </div>
-          <div class="urgent-section">
-            <div class="dashboard-title">
-              <h3>Most urgent unresolved</h3>
-              <span>Priority, then oldest first</span>
-            </div>
-            <div id="urgentReportsList" class="simple-report-list"></div>
-          </div>
-        </section>
-
-        <form id="reportForm" class="simple-form">
-          <label>Road or street<input id="roadInput" maxlength="120" required placeholder="e.g. Main Street"></label>
-          <label>Area or locality<input id="localityInput" maxlength="120" required placeholder="e.g. Central Market"></label>
-          <div class="simple-form-row">
-            <label>Severity
-              <select id="severityInput">
-                <option value="Low">Low</option>
-                <option value="Medium" selected>Medium</option>
-                <option value="High">High</option>
-              </select>
-            </label>
-            <label>Effect on traffic
-              <select id="trafficImpactInput">
-                <option value="Low">Little or no effect</option>
-                <option value="Medium" selected>Vehicles slow down</option>
-                <option value="High">Vehicles swerve or stop</option>
-              </select>
-            </label>
-          </div>
-          <label>Is anyone injured or in immediate danger?
-            <select id="immediateDangerInput">
-              <option value="no" selected>No</option>
-              <option value="yes">Yes</option>
-            </select>
-          </label>
-          <p id="assessmentPreview" class="assessment-preview" aria-live="polite" aria-atomic="true"></p>
-          <div class="simple-form-row coordinates-row">
-            <label>Latitude (optional)<input id="latitudeInput" inputmode="decimal" placeholder="e.g. 28.6139"></label>
-            <label>Longitude (optional)<input id="longitudeInput" inputmode="decimal" placeholder="e.g. 77.2090"></label>
-          </div>
-          <label>Description<textarea id="descriptionInput" maxlength="280" required rows="3" placeholder="Briefly describe the pothole"></textarea></label>
-          <button id="submitButton" class="primary-button" type="submit">Submit report over TCP</button>
-          <p id="reportFeedback" class="feedback" aria-live="polite"></p>
-          <div id="duplicateWarning" class="duplicate-warning" hidden>
-            <strong>Possible similar report</strong>
-            <p id="duplicateMessage"></p>
-            <p>This basic check can give false matches. Submit anyway?</p>
-            <div class="simple-form-row">
-              <button id="continueDuplicate" class="primary-button" type="button">Submit anyway</button>
-              <button id="cancelDuplicate" class="secondary-button" type="button">Cancel</button>
-            </div>
-          </div>
-        </form>
-
-        <div class="simple-list-heading">
-          <div><h2>Submitted reports</h2><p>Real reports held by the server while it is running.</p></div>
-          <button id="refreshButton" class="secondary-button" type="button">Refresh</button>
-        </div>
-        <div class="report-filters-simple">
-          <input id="searchReports" type="search" placeholder="Search ID, road, or locality" aria-label="Search reports">
-          <select id="priorityFilter" aria-label="Filter by priority">
-            <option value="all">All priorities</option>
-            <option value="CRITICAL">Critical</option>
-            <option value="HIGH">High</option>
-            <option value="MEDIUM">Medium</option>
-            <option value="LOW">Low</option>
-          </select>
-          <select id="statusFilter" aria-label="Filter by status">
-            <option value="all">All statuses</option>
-            <option>Pending</option>
-            <option>Under Review</option>
-            <option>In Progress</option>
-            <option>Resolved</option>
-          </select>
-          <select id="sortReports" aria-label="Sort reports">
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-          </select>
-        </div>
-        <div id="reportsList" class="simple-report-list" aria-live="polite"></div>
-        <p id="statusFeedback" class="feedback" aria-live="polite"></p>
-        <p id="detailFeedback" class="feedback" aria-live="polite"></p>
-        <p class="simple-note">Status changes are simulated for this demo; they do not confirm a real repair.</p>
-      </section>
-
-      <section class="protocol-column udp-column" aria-labelledby="udpHeading">
-        <div class="protocol-heading">
-          <span class="protocol-label udp-label">UDP</span>
-          <div>
-            <h2 id="udpHeading">Quick location alert</h2>
-            <p>Connectionless datagram: quick to send, but delivery is not guaranteed.</p>
-          </div>
-        </div>
-        <div class="simple-form">
-          <label>Road or street<input id="udpRoadInput" maxlength="120" placeholder="e.g. Lake Road"></label>
-          <label>Area or locality<input id="udpLocalityInput" maxlength="120" placeholder="e.g. North Ward"></label>
-          <label>Severity<select id="udpSeverityInput"><option>Low</option><option selected>Medium</option><option>High</option></select></label>
-          <label>Effect on traffic
-            <select id="udpTrafficInput">
-              <option>Low</option>
-              <option selected>Medium</option>
-              <option>High</option>
-            </select>
-          </label>
-          <label>Is anyone injured or in immediate danger?
-            <select id="udpImmediateDangerInput">
-              <option value="No" selected>No</option>
-              <option value="Yes">Yes</option>
-            </select>
-          </label>
-          <button id="udpButton" class="primary-button" type="button">Send quick alert over UDP</button>
-          <p id="udpFeedback" class="feedback" aria-live="polite"></p>
-        </div>
-                <div class="simple-list-heading udp-list-heading">
-          <div><h2>Alerts received (UDP status list)</h2><p>Real-time alerts with application-level status updates.</p></div>
-          <button id="refreshUdpButton" class="secondary-button" type="button">Refresh UDP</button>
-        </div>
-        <div class="report-filters-simple">
-          <input id="searchUdpAlerts" type="search" placeholder="Search UDP ID, road, or locality" aria-label="Search UDP alerts">
-          <select id="udpStatusFilter" aria-label="Filter UDP alerts by status">
-            <option value="all">All statuses</option>
-            <option>Pending</option>
-            <option>Under Review</option>
-            <option>In Progress</option>
-            <option>Resolved</option>
-          </select>
-        </div>
-        <div id="udpAlertsList" class="simple-report-list" aria-live="polite"></div>
-        <p id="udpStatusFeedback" class="feedback" aria-live="polite"></p>
-        <p class="simple-note">UDP status changes send datagrams directly to port 9091 and wait for application-level server acknowledgement (3s timeout).</p>
-      </section>
     </div>
 
-    <section class="communication-panel" aria-labelledby="communicationHeading">
-      <div class="network-panel-heading">
-        <div>
-          <h2 id="communicationHeading">Communication log</h2>
-          <p>Recent actions from this browser. TCP entries show request/reply operations; UDP entries do not imply receiver acknowledgement.</p>
-        </div>
-        <button id="clearLogButton" class="secondary-button" type="button">Clear log</button>
+    <div class="nav-section-label">NAVIGATION</div>
+    <ul class="nav-list" role="list">
+      <li>
+        <button class="nav-item active" data-section="dashboard" id="nav-dashboard" type="button" aria-current="page">
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Dashboard
+        </button>
+      </li>
+      <li>
+        <button class="nav-item" data-section="report" id="nav-report" type="button">
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Report (TCP)
+          <span class="nav-badge tcp-badge">TCP</span>
+        </button>
+      </li>
+      <li>
+        <button class="nav-item" data-section="udp" id="nav-udp" type="button">
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          UDP Alerts
+          <span class="nav-badge udp-badge">UDP</span>
+        </button>
+      </li>
+      <li>
+        <button class="nav-item" data-section="reports" id="nav-reports" type="button">
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          All Reports
+        </button>
+      </li>
+      <li>
+        <button class="nav-item" data-section="network" id="nav-network" type="button">
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="3"/><circle cx="19" cy="19" r="3"/><circle cx="5" cy="19" r="3"/><line x1="12" y1="8" x2="5.5" y2="16.5"/><line x1="12" y1="8" x2="18.5" y2="16.5"/></svg>
+          Network Info
+        </button>
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <div class="server-status-pill" id="sidebarStatus">
+        <span class="status-dot" id="sidebarDot"></span>
+        <span id="sidebarStatusText">Checking...</span>
       </div>
-      <ol id="communicationLog" class="communication-log" aria-live="polite">
-        <li class="log-empty">No manual network operations logged yet.</li>
-      </ol>
+    </div>
+  </nav>
+
+  <!-- Mobile nav toggle -->
+  <button class="mobile-nav-toggle" id="mobileNavToggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+
+  <!-- Main Content -->
+  <main class="main-content" id="mainContent">
+
+    <!-- ====== SECTION: DASHBOARD ====== -->
+    <section class="page-section" id="section-dashboard" aria-labelledby="dashboard-heading">
+      <div class="page-header">
+        <div>
+          <h1 id="dashboard-heading">NetLink Dashboard</h1>
+        </div>
+        <div class="header-status-group">
+          <div class="connection-pill" id="dashConnectionPill">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">Checking...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats row -->
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-card">
+          <div class="stat-label">Total Reports</div>
+          <div class="stat-value" id="totalReports">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Pending</div>
+          <div class="stat-value amber" id="pendingReports">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active</div>
+          <div class="stat-value blue" id="inProgressReports">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Resolved</div>
+          <div class="stat-value green" id="resolvedReports">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Critical Priority</div>
+          <div class="stat-value red" id="criticalReports">—</div>
+        </div>
+      </div>
+
+      <!-- Recent reports -->
+      <div class="section-heading">
+        <h2>Recent Reports</h2>
+        <span class="live-indicator"><span class="pulse-dot"></span> Live data from C server</span>
+      </div>
+      <div id="recentReportsList" class="report-cards" aria-live="polite"></div>
+
+      <!-- Quick actions -->
+      <div class="quick-actions">
+        <button class="btn btn-primary" id="dashSubmitBtn" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Submit TCP Report
+        </button>
+        <button class="btn btn-secondary" id="dashAlertBtn" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          Send UDP Alert
+        </button>
+      </div>
     </section>
 
-    <footer class="simple-footer">TCP reports and UDP alerts are separate communication paths to the same C server.</footer>
+    <!-- ====== SECTION: SUBMIT REPORT (TCP) ====== -->
+    <section class="page-section hidden" id="section-report" aria-labelledby="report-heading">
+      <div class="page-header">
+        <div>
+          <div class="page-eyebrow"><span class="tcp-chip">TCP · Port 9090</span></div>
+          <h1 id="report-heading">Submit a Pothole Report</h1>
+        </div>
+      </div>
+
+      <div class="two-col-layout">
+        <div class="form-column">
+          <div class="card">
+            <div class="card-header">
+              <h2>Report Details</h2>
+              <span class="protocol-tag tcp-tag">via HTTP → TCP</span>
+            </div>
+
+            <form id="reportForm" novalidate>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="roadInput">Road / Street <span class="required">*</span></label>
+                  <input type="text" id="roadInput" maxlength="120" required placeholder="e.g. MG Road">
+                </div>
+                <div class="form-group">
+                  <label for="localityInput">Area / Locality <span class="required">*</span></label>
+                  <input type="text" id="localityInput" maxlength="120" required placeholder="e.g. Connaught Place">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="severityInput">Severity</label>
+                  <select id="severityInput">
+                    <option value="Low">Low</option>
+                    <option value="Medium" selected>Medium</option>
+                    <option value="High">High</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="trafficImpactInput">Traffic Impact</label>
+                  <select id="trafficImpactInput">
+                    <option value="Low">Low – Little or no effect</option>
+                    <option value="Medium" selected>Medium – Vehicles slow down</option>
+                    <option value="High">High – Vehicles swerve or stop</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="immediateDangerInput">Immediate Danger / Injury?</label>
+                <select id="immediateDangerInput">
+                  <option value="No" selected>No</option>
+                  <option value="Yes">Yes – Someone is in danger</option>
+                </select>
+              </div>
+
+              <div class="priority-preview" id="priorityPreview" aria-live="polite"></div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="latitudeInput">Latitude (optional)</label>
+                  <input type="text" id="latitudeInput" inputmode="decimal" placeholder="e.g. 28.6139">
+                </div>
+                <div class="form-group">
+                  <label for="longitudeInput">Longitude (optional)</label>
+                  <input type="text" id="longitudeInput" inputmode="decimal" placeholder="e.g. 77.2090">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="descriptionInput">Description <span class="required">*</span></label>
+                <textarea id="descriptionInput" maxlength="280" required rows="3" placeholder="Briefly describe the pothole, its location and size"></textarea>
+              </div>
+
+              <div id="duplicateWarning" class="warning-box" hidden>
+                <div class="warning-icon">⚠</div>
+                <div>
+                  <strong>Possible Duplicate</strong>
+                  <p id="duplicateMessage"></p>
+                  <p class="warning-note">This is a basic check and may have false matches. You can still submit.</p>
+                  <div class="btn-row">
+                    <button id="continueDuplicate" class="btn btn-primary" type="button">Submit Anyway</button>
+                    <button id="cancelDuplicate" class="btn btn-ghost" type="button">Cancel</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button id="submitButton" class="btn btn-primary btn-lg" type="submit">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  Submit over TCP
+                </button>
+              </div>
+              <p id="reportFeedback" class="form-feedback" aria-live="polite"></p>
+            </form>
+          </div>
+        </div>
+
+        <div class="info-column">
+          <div class="card info-card">
+            <h3>How TCP Works Here</h3>
+            <ol class="flow-steps">
+              <li><span>1</span> Browser sends HTTP POST to bridge on port 5000</li>
+              <li><span>2</span> Bridge opens TCP connection to C server on port 9090</li>
+              <li><span>3</span> Three-way handshake: SYN → SYN-ACK → ACK</li>
+              <li><span>4</span> Bridge sends: <code>REPORT|severity|traffic|road|…</code></li>
+              <li><span>5</span> Server validates, assigns ID and calculates priority</li>
+              <li><span>6</span> Server replies with JSON → bridge forwards to browser</li>
+            </ol>
+            <div class="info-note">
+              <strong>Priority formula:</strong> Severity + Traffic where Low=1, Medium=2, High=3.<br>
+              Total 2=LOW, 3–4=MEDIUM, 5=HIGH, 6=CRITICAL.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====== SECTION: UDP ALERTS ====== -->
+    <section class="page-section hidden" id="section-udp" aria-labelledby="udp-heading">
+      <div class="page-header">
+        <div>
+          <div class="page-eyebrow"><span class="udp-chip">UDP · Port 9091</span></div>
+          <h1 id="udp-heading">UDP Location Alerts</h1>
+          <p class="page-subtitle">UDP sends a single datagram – connectionless and fast, but delivery is not guaranteed.</p>
+        </div>
+      </div>
+
+      <div class="two-col-layout">
+        <div class="form-column">
+          <div class="card">
+            <div class="card-header">
+              <h2>Send a Quick Alert</h2>
+              <span class="protocol-tag udp-tag">UDP Datagram</span>
+            </div>
+
+            <div class="form-group">
+              <label for="udpRoadInput">Road / Street <span class="required">*</span></label>
+              <input type="text" id="udpRoadInput" maxlength="120" placeholder="e.g. Lake Road">
+            </div>
+            <div class="form-group">
+              <label for="udpLocalityInput">Area / Locality <span class="required">*</span></label>
+              <input type="text" id="udpLocalityInput" maxlength="120" placeholder="e.g. North Ward">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="udpSeverityInput">Severity</label>
+                <select id="udpSeverityInput">
+                  <option>Low</option>
+                  <option selected>Medium</option>
+                  <option>High</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="udpTrafficInput">Traffic Impact</label>
+                <select id="udpTrafficInput">
+                  <option>Low</option>
+                  <option selected>Medium</option>
+                  <option>High</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="udpImmediateDangerInput">Immediate Danger / Injury?</label>
+              <select id="udpImmediateDangerInput">
+                <option value="No" selected>No</option>
+                <option value="Yes">Yes</option>
+              </select>
+            </div>
+
+            <div class="udp-warning-box">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span>UDP is connectionless. A successful <code>sendto()</code> does <strong>not</strong> confirm delivery or server receipt. Delivery is best-effort only.</span>
+            </div>
+
+            <button id="udpButton" class="btn btn-udp btn-lg" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              Send UDP Alert
+            </button>
+            <p id="udpFeedback" class="form-feedback" aria-live="polite"></p>
+          </div>
+
+          <!-- Alert list -->
+          <div class="card" style="margin-top: 16px;">
+            <div class="card-header">
+              <h2>Received Alerts</h2>
+              <button id="refreshUdpButton" class="btn btn-sm btn-ghost" type="button">Refresh</button>
+            </div>
+            <div class="form-row filter-row">
+              <input type="search" id="searchUdpAlerts" placeholder="Search ID, road, locality" aria-label="Search UDP alerts">
+              <select id="udpStatusFilter" aria-label="Filter by status">
+                <option value="all">All statuses</option>
+                <option>Pending</option>
+                <option>Under Review</option>
+                <option>In Progress</option>
+                <option>Resolved</option>
+              </select>
+            </div>
+            <div id="udpAlertsList" aria-live="polite"></div>
+            <p id="udpStatusFeedback" class="form-feedback" aria-live="polite"></p>
+            <p class="helper-note">Status updates send a UDP datagram and wait up to 3 seconds for an application-level acknowledgement from the server. UDP itself remains best-effort.</p>
+          </div>
+        </div>
+
+        <div class="info-column">
+          <div class="card info-card">
+            <h3>TCP vs. UDP</h3>
+            <div class="compare-table">
+              <div class="compare-row header">
+                <div></div>
+                <div class="tcp-col">TCP</div>
+                <div class="udp-col">UDP</div>
+              </div>
+              <div class="compare-row">
+                <div>Connection</div>
+                <div class="tcp-col">Required (3-way handshake)</div>
+                <div class="udp-col">None</div>
+              </div>
+              <div class="compare-row">
+                <div>Delivery</div>
+                <div class="tcp-col">Guaranteed, ordered</div>
+                <div class="udp-col">Best effort</div>
+              </div>
+              <div class="compare-row">
+                <div>Overhead</div>
+                <div class="tcp-col">Higher</div>
+                <div class="udp-col">Lower</div>
+              </div>
+              <div class="compare-row">
+                <div>Use here</div>
+                <div class="tcp-col">Reports, status, queries</div>
+                <div class="udp-col">Quick location alerts</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card info-card" style="margin-top: 16px;">
+            <h3>UDP Protocol Used</h3>
+            <p class="info-text">Alert datagram (fire-and-forget):</p>
+            <code class="code-block">ALERT_V2|severity|traffic|danger|road|locality</code>
+            <p class="info-text" style="margin-top: 12px;">Status update datagram:</p>
+            <code class="code-block">ALERT_STATUS|UDP-XXXXXX|New Status</code>
+            <p class="info-text" style="margin-top: 12px;">Server ACK (if received within 3 s):</p>
+            <code class="code-block">ACK|STATUS|UDP-XXXXXX|status</code>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====== SECTION: ALL REPORTS ====== -->
+    <section class="page-section hidden" id="section-reports" aria-labelledby="reports-heading">
+      <div class="page-header">
+        <div>
+          <div class="page-eyebrow">REPORT MANAGEMENT</div>
+          <h1 id="reports-heading">All Reports</h1>
+          <p class="page-subtitle">All reports held in the C server's memory. They are cleared when the server restarts.</p>
+        </div>
+        <button id="refreshButton" class="btn btn-secondary" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Refresh
+        </button>
+      </div>
+
+      <div class="filter-bar">
+        <input type="search" id="searchReports" placeholder="Search by ID, road, or locality" aria-label="Search reports">
+        <select id="priorityFilter" aria-label="Filter by priority">
+          <option value="all">All priorities</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="HIGH">High</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="LOW">Low</option>
+        </select>
+        <select id="statusFilter" aria-label="Filter by status">
+          <option value="all">All statuses</option>
+          <option>Pending</option>
+          <option>Under Review</option>
+          <option>In Progress</option>
+          <option>Resolved</option>
+        </select>
+        <select id="sortReports" aria-label="Sort order">
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+        </select>
+      </div>
+
+      <div id="reportsList" class="report-cards" aria-live="polite"></div>
+      <p id="statusFeedback" class="form-feedback" aria-live="polite"></p>
+      <p id="detailFeedback" class="form-feedback" aria-live="polite"></p>
+      <p class="helper-note">Status changes use the TCP STATUS command. They are stored in the C server's memory only and do not represent a real road repair.</p>
+    </section>
+
+    <!-- ====== SECTION: NETWORK INFO ====== -->
+    <section class="page-section hidden" id="section-network" aria-labelledby="network-heading">
+      <div class="page-header">
+        <div>
+          <div class="page-eyebrow">COMPUTER NETWORKS DEMONSTRATION</div>
+          <h1 id="network-heading">Network Information</h1>
+          <p class="page-subtitle">Live server configuration, protocol demonstration, and architecture overview.</p>
+        </div>
+      </div>
+
+      <!-- Server info cards -->
+      <div class="section-heading">
+        <h2>Server Configuration</h2>
+        <div class="btn-row">
+          <button id="refreshNetworkButton" class="btn btn-ghost btn-sm" type="button">Refresh</button>
+          <button id="tcpTestButton" class="btn btn-primary btn-sm" type="button">Run TCP PING Test</button>
+        </div>
+      </div>
+      <div class="network-facts" id="networkFacts">
+        <div class="fact-card">
+          <span class="fact-label">C Server Status</span>
+          <span class="fact-value" id="networkServerStatus">Checking…</span>
+        </div>
+        <div class="fact-card">
+          <span class="fact-label">HTTP Bridge Port</span>
+          <span class="fact-value" id="httpPortInfo">5000</span>
+        </div>
+        <div class="fact-card">
+          <span class="fact-label">TCP Report Port</span>
+          <span class="fact-value" id="tcpPortInfo">9090</span>
+        </div>
+        <div class="fact-card">
+          <span class="fact-label">UDP Alert Port</span>
+          <span class="fact-value" id="udpPortInfo">9091</span>
+        </div>
+        <div class="fact-card">
+          <span class="fact-label">Server Bind</span>
+          <span class="fact-value" id="serverBindInfo">Loading…</span>
+        </div>
+        <div class="fact-card">
+          <span class="fact-label">Active TCP Clients</span>
+          <span class="fact-value" id="activeClientsInfo">Loading…</span>
+        </div>
+      </div>
+      <p id="networkFeedback" class="form-feedback" aria-live="polite" style="margin-top: 8px;"></p>
+
+      <!-- Architecture Diagram -->
+      <div class="section-heading" style="margin-top: 32px;">
+        <h2>Architecture</h2>
+      </div>
+      <div class="arch-diagram">
+        <div class="arch-node browser-node">
+          <div class="arch-icon">🌐</div>
+          <div class="arch-label">Browser</div>
+          <div class="arch-sub">HTML/CSS/JS</div>
+        </div>
+
+        <div class="arch-connector">
+          <div class="arch-line"></div>
+          <div class="arch-tag http-tag">HTTP · Port 5000</div>
+        </div>
+
+        <div class="arch-node bridge-node">
+          <div class="arch-icon">⚙</div>
+          <div class="arch-label">bridge.exe</div>
+          <div class="arch-sub">C HTTP Bridge</div>
+        </div>
+
+        <div class="arch-connector">
+          <div class="arch-line"></div>
+          <div class="arch-tag tcp-tag-sm">TCP · Port 9090</div>
+        </div>
+
+        <div class="arch-node server-node">
+          <div class="arch-icon">🖥</div>
+          <div class="arch-label">server.exe</div>
+          <div class="arch-sub">C Winsock Server</div>
+        </div>
+      </div>
+
+      <div class="arch-udp-row">
+        <div class="arch-udp-label">Also:</div>
+        <div class="arch-udp-path">
+          <span class="arch-node-sm">Browser / client.exe</span>
+          <span class="arch-arrow">—— UDP · Port 9091 ——→</span>
+          <span class="arch-node-sm">server.exe</span>
+        </div>
+      </div>
+
+      <!-- Protocol explanations -->
+      <div class="section-heading" style="margin-top: 32px;">
+        <h2>Protocol Demonstration</h2>
+      </div>
+      <div class="protocol-cards">
+        <div class="proto-card tcp-proto">
+          <div class="proto-header">
+            <span class="proto-badge tcp-badge-lg">TCP</span>
+            <h3>Connection-Oriented</h3>
+          </div>
+          <ul class="proto-points">
+            <li>Requires a three-way handshake (SYN, SYN-ACK, ACK) before data flows</li>
+            <li>Guarantees ordered, reliable delivery of bytes</li>
+            <li>Used for: report submission, list, detail, status updates, PING</li>
+            <li>Messages are newline-delimited because TCP is a byte stream</li>
+            <li>Multiple clients handled by one handler thread each</li>
+            <li>Critical sections protect shared report data</li>
+          </ul>
+        </div>
+        <div class="proto-card udp-proto">
+          <div class="proto-header">
+            <span class="proto-badge udp-badge-lg">UDP</span>
+            <h3>Connectionless</h3>
+          </div>
+          <ul class="proto-points">
+            <li>No connection setup – sends a single datagram and returns</li>
+            <li>No delivery guarantee; no ordering; no duplicate detection</li>
+            <li>Used for: location alerts using ALERT_V2 protocol</li>
+            <li>Application-level ACK implemented on top, but UDP itself is still best-effort</li>
+            <li>A successful sendto() does not mean the server received the datagram</li>
+            <li>Server stores only the 10 most recent UDP alerts</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Communication Log -->
+      <div class="section-heading" style="margin-top: 32px;">
+        <h2>Communication Log</h2>
+        <button id="clearLogButton" class="btn btn-ghost btn-sm" type="button">Clear</button>
+      </div>
+      <p class="helper-note" style="margin-bottom: 12px;">Records user-triggered network actions only. Automatic background polling is not logged.</p>
+      <ol id="communicationLog" class="comm-log" aria-live="polite">
+        <li class="log-empty">No network operations logged yet.</li>
+      </ol>
+
+      <!-- Concepts -->
+      <div class="section-heading" style="margin-top: 32px;">
+        <h2>Key Networking Concepts</h2>
+      </div>
+      <div class="concepts-grid">
+        <details class="concept-item">
+          <summary>What is a Socket?</summary>
+          <p>A socket is an OS-level endpoint for network communication. In this project, C programs use Windows Sockets (Winsock) initialized with <code>WSAStartup()</code>. A socket binds to an IP address and port to send or receive data.</p>
+        </details>
+        <details class="concept-item">
+          <summary>Three-Way Handshake</summary>
+          <p>TCP connections begin with SYN (client) → SYN-ACK (server) → ACK (client). This is done by the OS TCP stack automatically when your code calls <code>connect()</code> on the client and <code>accept()</code> on the server.</p>
+        </details>
+        <details class="concept-item">
+          <summary>Why Newline Framing?</summary>
+          <p>TCP is a byte stream – there are no message boundaries. A single <code>send()</code> may be received in multiple <code>recv()</code> calls. This server uses newline (<code>\n</code>) as a message terminator so both ends know where one message ends.</p>
+        </details>
+        <details class="concept-item">
+          <summary>Concurrency & Critical Sections</summary>
+          <p>The C server spawns one Windows thread per accepted TCP client. All threads share the report and alert arrays. Windows critical sections (<code>CRITICAL_SECTION</code>) prevent simultaneous writes that would corrupt the shared data.</p>
+        </details>
+        <details class="concept-item">
+          <summary>127.0.0.1 vs 0.0.0.0</summary>
+          <p><code>0.0.0.0</code> (INADDR_ANY) means the server listens on all available network interfaces. <code>127.0.0.1</code> (loopback) routes traffic back to the same machine. The bridge uses loopback to talk to the server on the same PC.</p>
+        </details>
+        <details class="concept-item">
+          <summary>HTTP as Application Layer</summary>
+          <p>HTTP runs over TCP. The browser speaks HTTP to the C bridge on port 5000. The bridge then speaks the custom text protocol (REPORT, LIST, STATUS, etc.) over TCP to the C server on port 9090.</p>
+        </details>
+      </div>
+    </section>
+
   </main>
+
   <script src="/script.js" defer></script>
 </body>
 </html>
