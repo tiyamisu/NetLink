@@ -240,9 +240,11 @@ NetLink/
 ├── client.c         # Interactive command-line test client
 ├── start.bat        # Automated one-click build and launch script for Windows
 ├── README.md        # Main repository overview and setup guide
-├── ABOUT.md         # Beginner-friendly guide and viva examination preparation
-├── FEATURES.md      # Detailed technical feature catalog and protocol specs
 ├── .gitignore       # Git exclusions (binaries, logs, temporary files)
+├── docs/            # Project documentation and guides
+│   ├── ABOUT.md     # Beginner-friendly guide and viva examination preparation
+│   ├── FEATURES.md  # Detailed technical feature catalog and protocol specs
+│   └── how_to_run.md# Quick copy-paste terminal commands
 └── web/             # Frontend single-page application
     ├── index.html   # Semantic UI layout (5 dashboard sections)
     ├── style.css    # Responsive dark navy styling system
@@ -377,8 +379,9 @@ Supported CLI commands:
 
 For deeper exploration of the project implementation, architecture, and evaluation prep:
 
-- **[ABOUT.md](ABOUT.md)** — A complete, beginner-friendly guide covering project background, end-to-end data flows, UI element walkthroughs, and viva examination Q&A.
-- **[FEATURES.md](FEATURES.md)** — Exhaustive feature catalog documenting wire protocols, payload schemas, validation rules, and error codes.
+- **[ABOUT.md](docs/ABOUT.md)** — A complete, beginner-friendly guide covering project background, end-to-end data flows, UI element walkthroughs, and viva examination Q&A.
+- **[FEATURES.md](docs/FEATURES.md)** — Exhaustive feature catalog documenting wire protocols, payload schemas, validation rules, and error codes.
+- **[how_to_run.md](docs/how_to_run.md)** — Concise copy-paste terminal commands for building and running.
 
 ---
 
