@@ -1,71 +1,268 @@
-# NetLink — Pothole Reporting System
+# NetLink – TCP/UDP-Based Client-Server Pothole Reporting System
 
-A **Computer Networks (CNS)** project demonstrating TCP and UDP client-server communication using **C and Windows Sockets (Winsock)**. Multiple browser clients and a CLI client send pothole reports to a single C server over TCP; a separate UDP path sends lightweight location alerts.
+A hands-on **Computer Networks (CNS AAT)** project demonstrating socket programming, client-server architectures, and dual transport-layer protocols (**TCP** and **UDP**) built from scratch in **C and Windows Sockets (Winsock)**.
 
-## What this project demonstrates
-
-| Concept | Where |
-|---|---|
-| TCP connection setup (3-way handshake) | Every report or query from the browser |
-| Reliable, ordered byte-stream delivery | TCP commands sent to port 9090 |
-| Newline message framing | `server.c` reads one line per command |
-| UDP connectionless datagrams | ALERT_V2 datagrams sent to port 9091 |
-| Application-level ACK over UDP | Status acknowledgements after ALERT_STATUS |
-| Concurrent TCP clients | One Windows thread per `accept()`-ed client |
-| Critical section synchronisation | Protecting shared report/alert arrays |
-| HTTP as an application-layer protocol | Browser ↔ bridge on port 5000 |
-| OSI model in practice | Browser → HTTP → Bridge → TCP/UDP → C Server |
+NetLink provides an intuitive single-page web portal where citizens can submit comprehensive road hazard reports over reliable TCP or transmit rapid location telemetry over connectionless UDP. A custom C HTTP bridge acts as the application gateway between browser clients and the multi-threaded C server.
 
 ---
 
-## Architecture
+## Table of Contents
 
-```text
-Browser (HTML + CSS + JavaScript)
-    │  HTTP POST/GET  ·  http://127.0.0.1:5000
-    ▼
-bridge.exe  (bridge.c — C HTTP server)
-    │  TCP command  ·  127.0.0.1:9090  (REPORT / LIST / DETAIL / STATUS / CHECK / PING / STATS / ALERTS)
-    ▼
-server.exe  (server.c — C Winsock server)
-    ▲
-    │  UDP datagram  ·  port 9091  (ALERT_V2 / ALERT_STATUS)
-    └──────────── bridge.exe  and  client.exe
+- [Key Features](#key-features)
+- [Website Preview](#website-preview)
+- [Technology Stack](#technology-stack)
+- [System Architecture](#system-architecture)
+- [Ports and Protocols](#ports-and-protocols)
+- [How the Project Works](#how-the-project-works)
+  - [1. TCP Formal Report Flow](#1-tcp-formal-report-flow)
+  - [2. UDP Quick Alert Flow](#2-udp-quick-alert-flow)
+- [Report Priority System](#report-priority-system)
+- [Report Statuses](#report-statuses)
+- [Project Structure](#project-structure)
+- [Installation and Setup](#installation-and-setup)
+- [Running the Application](#running-the-application)
+- [Computer Networks Concepts Demonstrated](#computer-networks-concepts-demonstrated)
+- [Project Limitations](#project-limitations)
+- [Additional Documentation](#additional-documentation)
+
+---
+
+## Key Features
+
+- **Live Dashboard**: Real-time overview displaying aggregate statistics (*Total Reports*, *Active*, *Resolved*, *Critical*), an activity feed, and quick-action navigation.
+- **TCP-Based Pothole Reporting**: Complete intake form capturing road name, locality, severity, traffic impact, optional GPS coordinates, and descriptions with client and server-side validation.
+- **Server-Generated Report IDs**: Automatically generates sequential, formatted ticket IDs (`PTH-XXXXXX` for TCP reports, `UDP-XXXXXX` for UDP alerts).
+- **Automated Priority Calculation**: Calculates priority levels (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) using an algorithmic matrix combining hazard severity and road traffic density.
+- **Real-Time Duplicate Checking**: Performs asynchronous duplicate lookups (`CHECK|road|locality`) as users type, warning of existing unresolved road tickets.
+- **Quick UDP Location Alerts**: Transmits lightweight, connectionless hazard alerts (`ALERT_V2`) directly to the server's UDP listener with zero connection-handshake overhead.
+- **Report Listing & Detail Inspection**: Full case management allowing users to browse, filter, search by locality or road, and view in-depth report records.
+- **Lifecycle Status Updates**: Simulated tracking workflow supporting status transitions (`Pending` → `Under Review` → `In Progress` → `Resolved`).
+- **Network Information & Diagnostics**: Built-in diagnostic tab with interactive TCP ping latency tests, server configuration readouts, and live connection statistics.
+- **Live Communication Logs**: Real-time network monitor displaying outgoing commands and incoming responses with color-coded protocol badges (`TCP`, `UDP`, `HTTP`).
+- **Educational Networking Guide**: Embedded reference cards explaining the OSI model, TCP vs. UDP tradeoffs, socket lifecycle, and framing techniques.
+- **Interactive CLI Client**: Standalone C console utility (`client.c`) providing an interactive terminal interface to test all server commands directly.
+
+---
+
+## Website Preview
+
+> [!NOTE]
+> Screenshots can be captured and saved under an `assets/` or `screenshots/` directory for visual presentation. The portal features five distinct responsive sections:
+
+### 1. Dashboard
+Displays key metrics cards (*Total Reports*, *Active*, *Resolved*, *Critical*), a live activity ticker, and quick-start actions.
+*(Placeholder: Add screenshot of `http://127.0.0.1:5000/#dashboard`)*
+
+### 2. TCP Report Submission
+A structured form with live duplicate warnings, real-time priority estimation, and coordinate inputs.
+*(Placeholder: Add screenshot of `http://127.0.0.1:5000/#report`)*
+
+### 3. UDP Alerts
+A rapid-dispatch interface for emergency location alerts and an interactive feed of the last 10 UDP datagrams with inline status dropdowns.
+*(Placeholder: Add screenshot of `http://127.0.0.1:5000/#alerts`)*
+
+### 4. All Reports
+Case management table and card grid with multi-parameter filtering, search, and detailed inspection modals.
+*(Placeholder: Add screenshot of `http://127.0.0.1:5000/#records`)*
+
+### 5. Network Information
+Diagnostic console featuring real-time TCP ping testing, server client counts, protocol comparisons, and chronological wire logs.
+*(Placeholder: Add screenshot of `http://127.0.0.1:5000/#network`)*
+
+---
+
+## Technology Stack
+
+| Technology | Purpose |
+|---|---|
+| **C (ISO C99)** | Backend server (`server.c`), HTTP gateway bridge (`bridge.c`), and CLI client (`client.c`). |
+| **Windows Sockets (Winsock 2)** | Native Windows networking library (`ws2_32`) providing raw TCP stream and UDP datagram sockets. |
+| **HTML5** | Semantic structure for the single-page responsive web dashboard. |
+| **Vanilla CSS3** | Custom dark navy theme, flexbox/grid layouts, card components, and protocol badges (no heavy CSS frameworks). |
+| **Vanilla JavaScript (ES6)** | Dynamic client routing, DOM updates, asynchronous `fetch` API, duplicate checks, and live polling. |
+| **HTTP (over TCP)** | Application-layer communication between browser clients and the C HTTP bridge on port `5000`. |
+| **TCP** | Connection-oriented, reliable transport protocol for formal reports and queries on port `9090`. |
+| **UDP** | Connectionless, lightweight transport protocol for emergency location telemetry on port `9091`. |
+
+---
+
+## System Architecture
+
+NetLink uses a 3-tier architecture that bridges standard web browsers to native C Winsock programs:
+
+```mermaid
+flowchart TD
+    subgraph Client Tier
+        B[Web Browser\nHTML5 / CSS3 / Vanilla JS]
+        CLI[Interactive CLI Client\nclient.exe]
+    end
+
+    subgraph Gateway Tier
+        BR[HTTP Bridge\nbridge.exe :5000]
+    end
+
+    subgraph Server Tier
+        S[Core C Server\nserver.exe]
+        M[(In-Memory Data Store\nCRITICAL_SECTION)]
+    end
+
+    B -- "HTTP GET / POST\n(Port 5000)" --> BR
+    BR -- "TCP Commands (Stream)\n(Port 9090)" --> S
+    BR -. "UDP Datagrams (ALERT_V2)\n(Port 9091)" .-> S
+    CLI -- "Direct TCP (Port 9090)" --> S
+    CLI -. "Direct UDP (Port 9091)" .-> S
+    S <--> M
 ```
 
-`server.c` binds to `0.0.0.0` (`INADDR_ANY`) — it listens on all interfaces. `bridge.c` binds its HTTP listener to `127.0.0.1`, so the portal is accessed on the same PC. All bridge–server communication uses the `127.0.0.1` loopback.
+### Component Responsibilities
+
+- **Web Browser**: Renders the user interface, validates user inputs, sends HTTP requests to the bridge, and polls status endpoints.
+- **`bridge.c` (HTTP Bridge)**: Acts as a custom web server and protocol translator on port `5000`. It serves static files (`web/`), maintains a persistent TCP session per browser tab to `server.c` on port `9090`, and dispatches UDP datagrams to port `9091`.
+- **`server.c` (Core Winsock Server)**: Multi-threaded engine listening on TCP port `9090` and UDP port `9091`. It parses commands, enforces synchronization with critical sections, calculates priority ratings, and stores reports in memory.
+- **`client.c` (CLI Client)**: An optional standalone console program that connects directly to the server via TCP and UDP without needing a browser or HTTP bridge.
 
 ---
 
-## Ports and protocols
+## Ports and Protocols
 
-| Port | Protocol | Used by | Purpose |
+| Port | Protocol | Used By | Purpose |
 |---|---|---|---|
-| **5000** | HTTP (over TCP) | Bridge | Serves the browser portal and API |
-| **9090** | TCP | Bridge, client.exe | Reports, list, detail, status, ping, stats, alerts list |
-| **9091** | UDP | Bridge, client.exe | Location alerts (ALERT_V2) and status updates |
+| **5000** | HTTP over TCP | Web Browser ↔ `bridge.exe` | Serves the web interface and handles REST-like JSON API requests. |
+| **9090** | TCP | `bridge.exe` / `client.exe` ↔ `server.exe` | Transmits formal reports, queries, report details, status updates, duplicate checks, and ping diagnostics. |
+| **9091** | UDP | `bridge.exe` / `client.exe` ↔ `server.exe` | Transmits quick location alerts (`ALERT_V2`) and receives application-level ACKs for alert status changes. |
 
 ---
 
-## Files
+## How the Project Works
 
-| File | Description |
-|---|---|
-| `server.c` | Winsock TCP/UDP server. Accepts up to 20 TCP clients (one thread each), validates commands, assigns report IDs and priorities, and stores everything in memory. |
-| `bridge.c` | C HTTP server on port 5000. Serves the `web/` directory, validates browser API input, holds one TCP session per browser tab, and sends UDP alerts with `sendto()`. |
-| `client.c` | Optional interactive CLI client. Connects directly to port 9090 for TCP commands and port 9091 for UDP. |
-| `web/index.html` | Browser UI — five sections: Dashboard, TCP Report form, UDP Alerts, All Reports, and Network Info. |
-| `web/style.css` | Dark navy design system — card layout, TCP/UDP colour coding, responsive. |
-| `web/script.js` | All client-side logic — navigation, API calls, report rendering, UDP alert management, communication log. |
-| `server.exe` | Compiled server (recompile after editing `server.c`). |
-| `bridge.exe` | Compiled bridge (recompile after editing `bridge.c`). |
-| `client.exe` | Compiled CLI client (recompile after editing `client.c`). |
+### 1. TCP Formal Report Flow
 
-No Python, Node.js, database, or durable store. All data lives in the C server's memory and is lost on restart.
+```text
+Browser                 bridge.exe               server.exe
+  │                         │                        │
+  │  1. HTTP POST /api/report│                        │
+  ├────────────────────────►│                        │
+  │                         │  2. REPORT|... \n      │
+  │                         ├───────────────────────►│
+  │                         │                        │  3. Validate & Score Priority
+  │                         │                        │  4. Assign ID PTH-XXXXXX
+  │                         │                        │  5. Store in reports[]
+  │                         │  6. JSON Response Line │
+  │                         │◄───────────────────────┤
+  │  7. HTTP 200 (JSON)     │                        │
+  │◄────────────────────────┤                        │
+```
+
+1. **Submission**: User completes the report form in the browser and clicks **Submit Report**.
+2. **HTTP Translation**: The browser sends an HTTP POST to `http://127.0.0.1:5000/api/report`.
+3. **TCP Transmission**: `bridge.exe` formats the payload into a newline-terminated string:
+   ```text
+   REPORT|High|Medium|Ring Road|Hebbal|13.0358|77.5970|Deep crater near underpass|no\n
+   ```
+4. **Server Processing**: A dedicated worker thread in `server.exe` reads the stream, computes priority, generates an ID (e.g., `PTH-000001`), and locks the thread-safe store.
+5. **Response**: `server.exe` returns a JSON string over the same TCP socket.
+6. **UI Update**: `bridge.exe` passes the response to the browser, updating the dashboard and report tables.
+
+### 2. UDP Quick Alert Flow
+
+```text
+Browser                 bridge.exe               server.exe
+  │                         │                        │
+  │  1. HTTP POST /api/udp  │                        │
+  ├────────────────────────►│                        │
+  │                         │  2. sendto() Datagram  │
+  │                         ├ - - - - - - - - - - - ►│ (Port 9091)
+  │  3. HTTP 200 {sent:true}│                        │  4. recvfrom() in udp_handler
+  │◄────────────────────────┤                        │  5. Assign ID UDP-XXXXXX
+  │                         │                        │  6. Store in rolling buffer
+```
+
+1. **Dispatch**: User enters location and severity in the Quick Alert panel and clicks **Send Emergency Alert**.
+2. **Datagram Transmission**: `bridge.exe` packages the alert into a compact string and calls Winsock `sendto()`:
+   ```text
+   ALERT_V2|High|Low|no|Airport Expressway|Yelahanka
+   ```
+3. **Connectionless Delivery**: `sendto()` immediately places the packet on the network stack without establishing a handshake or waiting for an acknowledgment.
+4. **Server Storage**: The server's background UDP thread receives the packet via `recvfrom()`, assigns an ID (e.g., `UDP-000001`), and stores it in a 10-slot circular buffer.
+5. **Application-Level ACK**: When an alert status is modified, `ALERT_STATUS|id|status` is sent over UDP, and the server returns an explicit application-level `ACK|STATUS|...` datagram.
 
 ---
 
-## Build (Windows — GCC / MinGW)
+## Report Priority System
+
+NetLink automatically classifies every report using a deterministic scoring engine:
+
+### 1. Scoring Matrix
+
+Each input parameter is mapped to a numeric score:
+- **Severity**: Low = `1`, Medium = `2`, High = `3`
+- **Traffic Density**: Low = `1`, Medium = `2`, High = `3`
+
+### 2. Combined Priority Calculation
+
+$$\text{Total Score} = \text{Severity Score} + \text{Traffic Score}$$
+
+| Combined Score | Calculated Priority | Recommended Action |
+|:---:|:---:|---|
+| **2** | **LOW** | Regular road maintenance schedule; routine monitoring. |
+| **3 – 4** | **MEDIUM** | Road inspection requested; caution advisory. |
+| **5** | **HIGH** | Prompt physical inspection; warning signage recommended. |
+| **6** | **CRITICAL** | Urgent intervention required; notify emergency road crews. |
+
+> [!IMPORTANT]
+> If **Immediate Danger** is flagged (`yes`), the system automatically overrides standard advice with emergency safety directives while preserving the computed priority score.
+
+---
+
+## Report Statuses
+
+Every report moves through a 4-stage lifecycle:
+
+```text
+[ Pending ] ────► [ Under Review ] ────► [ In Progress ] ────► [ Resolved ]
+```
+
+- **`Pending`**: Default status upon submission. Awaiting municipal triage.
+- **`Under Review`**: Ticket acknowledged and queued for on-site assessment.
+- **`In Progress`**: Repair contractors or road inspection teams dispatched.
+- **`Resolved`**: Repair completed and hazard closed.
+
+*(Note: In this academic demonstration, status changes can be performed directly by the user to demonstrate state synchronization.)*
+
+---
+
+## Project Structure
+
+```text
+NetLink/
+├── server.c         # Multi-threaded Winsock C server (TCP 9090, UDP 9091)
+├── bridge.c         # Custom C HTTP server & protocol translator (HTTP 5000)
+├── client.c         # Interactive command-line test client
+├── start.bat        # Automated one-click build and launch script for Windows
+├── README.md        # Main repository overview and setup guide
+├── ABOUT.md         # Beginner-friendly guide and viva examination preparation
+├── FEATURES.md      # Detailed technical feature catalog and protocol specs
+├── .gitignore       # Git exclusions (binaries, logs, temporary files)
+└── web/             # Frontend single-page application
+    ├── index.html   # Semantic UI layout (5 dashboard sections)
+    ├── style.css    # Responsive dark navy styling system
+    └── script.js    # Client-side routing, API integrations, and event handling
+```
+
+---
+
+## Installation and Setup
+
+### Prerequisites
+
+- **Operating System**: Windows 10 or Windows 11.
+- **C Compiler**: GCC via **MinGW-w64** or **MSYS2 (UCRT64 / MINGW64)**.
+- **Libraries**: Windows Sockets 2 (`-lws2_32` — included with Windows/MinGW).
+- **Git** *(Optional)*: For repository cloning and version control.
+
+### Compilation
+
+Open PowerShell or Command Prompt in the project directory and compile using GCC:
 
 ```powershell
 gcc -o server.exe server.c -lws2_32
@@ -73,141 +270,116 @@ gcc -o bridge.exe bridge.c -lws2_32
 gcc -o client.exe client.c -lws2_32
 ```
 
+*(Optional strict compilation flags: `gcc -Wall -Wextra -o server.exe server.c -lws2_32`)*
+
 ---
 
-## Run
+## Running the Application
 
-Open **three separate terminals** (or use `Start-Process`) and run each in the project directory:
+### Option A: One-Click Startup (Recommended)
+
+Double-click **`start.bat`** or run it from the terminal:
 
 ```powershell
-.\server.exe        # Terminal 1 — starts TCP (9090) and UDP (9091) listeners
-.\bridge.exe        # Terminal 2 — starts HTTP server on port 5000
-.\client.exe        # Terminal 3 (optional) — interactive CLI client
+.\start.bat
 ```
 
-Then open **http://127.0.0.1:5000/** in your browser.
-
-> **Note:** Start `server.exe` before `bridge.exe` to avoid connection failures on the first request. If `bridge.exe` starts first it will reconnect automatically on the next request.
-
----
-
-## TCP report flow (step by step)
-
-1. Browser submits the form → HTTP POST to `bridge.exe` at `http://127.0.0.1:5000/api/report`.
-2. Bridge validates field lengths and characters, then sends over its TCP socket to `server.exe`:
-   ```
-   REPORT|severity|traffic|road|locality|lat|lon|description|immediateDanger\n
-   ```
-3. Server validates, assigns an ID (`RPT-XXXXXX`), calculates priority:
-   - Severity score: Low=1, Medium=2, High=3
-   - Traffic score: Low=1, Medium=2, High=3
-   - Total 2 → LOW · 3–4 → MEDIUM · 5 → HIGH · 6 → CRITICAL
-4. Server replies with a JSON line back over the same TCP connection.
-5. Bridge returns that JSON as an HTTP response.
-6. Browser shows the assigned ID and priority.
+`start.bat` will automatically:
+1. Verify if `gcc` is available and compile missing executables.
+2. Launch `server.exe` minimised on TCP `9090` and UDP `9091`.
+3. Launch `bridge.exe` minimised on HTTP `5000`.
+4. Launch your default browser directly to `http://127.0.0.1:5000/`.
 
 ---
 
-## UDP alert flow
+### Option B: Manual Multi-Terminal Startup
 
-1. Browser submits the quick-alert form → HTTP POST to `/api/udp-alert`.
-2. Bridge calls `sendto()` with the datagram:
-   ```
-   ALERT_V2|severity|traffic|immediateDanger|road|locality
-   ```
-3. `sendto()` returns immediately — **delivery is not confirmed**.
-4. If the server received it, it stores the alert with ID `UDP-XXXXXX` and status `Pending`.
-5. The browser then calls `/api/udp-alerts` (via TCP through the bridge) to list stored alerts.
-6. Status updates use `ALERT_STATUS|id|status` — the server replies `ACK|STATUS|id|status` or `NACK|reason`.
+Open **two separate terminals** in the project directory:
+
+**Terminal 1 — Core Server:**
+```powershell
+.\server.exe
+```
+*Console output:*
+```text
+[HH:MM:SS] NetLink server listening on TCP 0.0.0.0:9090 and UDP 0.0.0.0:9091
+```
+
+**Terminal 2 — HTTP Bridge:**
+```powershell
+.\bridge.exe
+```
+*Console output:*
+```text
+[HH:MM:SS] HTTP bridge listening on http://127.0.0.1:5000
+```
+
+Open your browser and navigate to:
+```text
+http://127.0.0.1:5000/
+```
 
 ---
 
-## TCP commands (text protocol — newline terminated)
+### Option C: Running the Interactive CLI Client
 
-| Command | Description |
+Open a **third terminal** to interact directly with the C server:
+
+```powershell
+.\client.exe
+```
+
+Supported CLI commands:
+- `list` — Retrieve all reports over TCP (`LIST`).
+- `report` — Interactively submit a formal report (`REPORT|...`).
+- `detail <id>` — Inspect a specific report (`DETAIL|id`).
+- `status <id>` — Update a report status (`STATUS|id|status`).
+- `check` — Run a duplicate check (`CHECK|road|locality`).
+- `ping` — Run a connectivity test (`PING`).
+- `stats` — Inspect server configuration and client connections (`STATS`).
+- `udp` — Send an emergency location alert datagram (`ALERT_V2|...`).
+- `udp-list` — List stored UDP alerts (`ALERTS`).
+- `udp-status <id>` — Update alert status with application ACK (`ALERT_STATUS|...`).
+- `quit` — Close connection and exit.
+
+---
+
+## Computer Networks Concepts Demonstrated
+
+| Networking Concept | Implementation in NetLink |
 |---|---|
-| `REPORT\|sev\|traffic\|road\|locality\|lat\|lon\|desc\|danger` | Submit a new pothole report |
-| `LIST` | Return JSON array of all reports |
-| `DETAIL\|RPT-XXXXXX` | Return full JSON for one report |
-| `STATUS\|RPT-XXXXXX\|New Status` | Update report status |
-| `CHECK\|road\|locality` | Duplicate check |
-| `PING` | Health check (server replies with pong JSON) |
-| `STATS` | Server configuration and client count |
-| `ALERTS` | List all UDP alerts stored by server |
-
-## UDP commands (datagram — no reply guaranteed)
-
-| Datagram | Description |
-|---|---|
-| `ALERT_V2\|sev\|traffic\|danger\|road\|locality` | Send a location alert |
-| `ALERT_STATUS\|UDP-XXXXXX\|status` | Update an alert's status (server sends ACK/NACK) |
-
-Valid status values: `Pending`, `Under Review`, `In Progress`, `Resolved`
+| **Client-Server Architecture** | Centralized `server.c` processes requests from web browsers (via `bridge.c`) and CLI clients (`client.c`). |
+| **HTTP (Application Layer)** | Custom HTTP server in `bridge.c` parses request lines, query parameters, and JSON payloads. |
+| **TCP (Transport Layer)** | Reliable, connection-oriented channel on port `9090` for critical data integrity (formal tickets). |
+| **UDP (Transport Layer)** | Low-overhead, connectionless datagram channel on port `9091` for rapid telemetry. |
+| **Socket Programming** | Low-level Winsock API usage: `socket()`, `bind()`, `listen()`, `accept()`, `send()`, `recv()`, `sendto()`, and `recvfrom()`. |
+| **Port Numbers & Multiplexing** | Disambiguating services on a single host (HTTP on `5000`, TCP on `9090`, UDP on `9091`). |
+| **TCP Three-Way Handshake** | Handshake execution when client sockets connect to port `9090`. |
+| **Reliable Byte-Stream Delivery** | Guaranteeing that large reports arrive intact without missing fields or out-of-order bytes. |
+| **Newline Message Framing** | Solving TCP stream boundary issues by delimiting distinct commands with `\n`. |
+| **Application-Level ACKs** | Sending custom `ACK|STATUS|...` or `NACK` datagrams over UDP to verify delivery. |
+| **Multithreading & Concurrency** | `CreateThread()` spawns dedicated worker threads per TCP client, plus a dedicated UDP listener thread. |
+| **Critical Sections** | Win32 `CRITICAL_SECTION` primitives prevent data races when multiple threads access the shared report array. |
+| **Loopback vs. All Interfaces** | `server.c` binds to `0.0.0.0` (`INADDR_ANY`), while `bridge.c` binds to `127.0.0.1` (localhost). |
 
 ---
 
-## Browser portal — sections
+## Project Limitations
 
-| Section | Protocol used | What you can do |
-|---|---|---|
-| **Dashboard** | TCP (background) | See live counts of all reports; navigate to other sections |
-| **Report (TCP)** | TCP via HTTP | Fill in the report form; see priority preview; detect duplicates |
-| **UDP Alerts** | UDP + TCP | Send a location alert datagram; view and update stored alerts |
-| **All Reports** | TCP via HTTP | Search, filter, sort; update status; fetch full detail per report |
-| **Network Info** | TCP via HTTP | View server config; run a PING test; see architecture; read protocol explanations |
+- **In-Memory Storage**: All reports (`MAX_REPORTS = 50`) and UDP alerts (`MAX_UDP_ALERTS = 10`) are stored in volatile RAM. Restarting `server.exe` clears all data.
+- **Unreliable UDP Path**: Standard UDP datagrams are best-effort; packets may be lost if network queues overflow.
+- **Academic Demonstration**: Built specifically for educational evaluation; does not include production authentication, role-based access control (RBAC), or TLS/HTTPS encryption.
+- **Simulated Workflow**: Status transitions demonstrate state synchronization and do not dispatch actual civic maintenance machinery.
 
 ---
 
-## Client.exe commands
+## Additional Documentation
 
-```
-list            # TCP LIST — fetch all reports
-report          # TCP REPORT — interactive report submission
-detail <id>     # TCP DETAIL|id — fetch one report
-status <id>     # TCP STATUS|id|status — update status
-check           # TCP CHECK|road|locality — duplicate check
-ping            # TCP PING — health check
-stats           # TCP STATS — server information
-udp             # UDP ALERT_V2 — send location alert
-udp-list        # UDP list (via TCP ALERTS command)
-udp-status <id> # UDP ALERT_STATUS|id|status — update alert
-quit            # Disconnect and exit
-```
+For deeper exploration of the project implementation, architecture, and evaluation prep:
+
+- **[ABOUT.md](ABOUT.md)** — A complete, beginner-friendly guide covering project background, end-to-end data flows, UI element walkthroughs, and viva examination Q&A.
+- **[FEATURES.md](FEATURES.md)** — Exhaustive feature catalog documenting wire protocols, payload schemas, validation rules, and error codes.
 
 ---
 
-## Common viva questions
-
-**Q: What is a socket?**
-A socket is an OS-managed endpoint for network communication, identified by an IP address and a port number. In C (Winsock), you call `socket()` → `bind()` → `listen()` → `accept()` on the server, and `socket()` → `connect()` on the client.
-
-**Q: Why does TCP need a three-way handshake?**
-It synchronises sequence numbers between both endpoints so that either side can detect out-of-order or lost segments and retransmit them. The handshake (SYN → SYN-ACK → ACK) happens automatically in the OS TCP stack when `connect()` and `accept()` are called.
-
-**Q: What is newline framing and why is it needed?**
-TCP is a byte stream — there are no built-in message boundaries. A single `send()` call may arrive in multiple `recv()` calls, or several `send()` calls may arrive in one `recv()`. By agreeing that each message ends with `\n`, both sides know exactly where one message ends.
-
-**Q: Why use UDP for alerts when it is unreliable?**
-UDP has lower overhead (no connection setup, no ACKs from the OS). For a brief location alert, the cost of establishing a TCP connection may outweigh the benefit if the message is time-sensitive. The application layer can add its own lightweight ACK if confirmation is needed.
-
-**Q: What is INADDR_ANY / 0.0.0.0?**
-`INADDR_ANY` tells `bind()` to accept connections on all network interfaces (e.g. loopback, Ethernet, Wi-Fi). The loopback address `127.0.0.1` routes traffic only within the same machine.
-
-**Q: What is a critical section?**
-A critical section is a Windows synchronisation primitive that allows only one thread at a time to execute a protected block of code. In this project, `EnterCriticalSection()` and `LeaveCriticalSection()` protect the shared report and alert arrays from concurrent writes by multiple client threads.
-
-**Q: Describe the OSI layers used in this project.**
-- Application: HTTP (browser ↔ bridge), and the custom text protocol (bridge ↔ server).
-- Transport: TCP for reports and queries; UDP for alerts.
-- Network: IP (IPv4) for routing between endpoints.
-- Data link / Physical: Ethernet or Wi-Fi (handled by the OS and NIC).
-
----
-
-## Design notes
-
-- The project has no Python, Node.js, or any non-C backend. All networking is done with Windows Sockets (Winsock).
-- Reports are stored in a fixed-size array in server memory; they are lost when the server is restarted.
-- The bridge maintains one persistent TCP connection per browser session (identified by a session UUID generated in JavaScript), reconnecting automatically if the server drops it.
-- UDP status updates use a 3-second `SO_RCVTIMEO` timeout to wait for an application-level `ACK`. A timeout does not mean the update failed — it means no acknowledgement was received within 3 seconds.
-- The portal is intentionally structured as a simple, professional demonstration, not a production SaaS application.
+*NetLink — Developed for Computer Networks (CNS AAT) using C, Windows Sockets, and Web Technologies.*
