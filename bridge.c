@@ -9,6 +9,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <direct.h>   /* _mkdir */
 
 #ifdef _MSC_VER
 #pragma comment(lib, "Ws2_32.lib")
@@ -685,6 +686,182 @@ static int valid_optional_report_value(const char *value, size_t max_len) {
     return 1;
 }
 
+/* ════════════════════════════════════════════════════════════════
+   IMAGE UPLOAD SUPPORT — base64 upload endpoint + file server
+   ════════════════════════════════════════════════════════════════*/
+
+#define MAX_UPLOAD_BYTES  (5 * 1024 * 1024)
+#define MAX_B64_UPLOAD    (7 * 1024 * 1024)
+#define UPLOADS_DIR       "uploads"
+
+static const signed char b64_tbl[256] = {
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+    52,53,54,55,56,57,58,59,60,61,-1,-1,-1, 0,-1,-1,
+    -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+    15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+    -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+    41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+};
+
+static int b64_decode(const char *src, size_t src_len,
+                      unsigned char *out, size_t cap) {
+    size_t out_len = 0;
+    uint32_t buf = 0;
+    int bits = 0;
+    for (size_t i = 0; i < src_len; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (isspace(c)) continue;
+        if (c == '=')   continue;
+        signed char v = b64_tbl[c];
+        if (v < 0) return -1;
+        buf = (buf << 6) | (uint32_t)(unsigned char)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (out_len >= cap) return -1;
+            out[out_len++] = (unsigned char)((buf >> bits) & 0xFF);
+        }
+    }
+    return (int)out_len;
+}
+
+static void gen_upload_filename(char *out, size_t cap, const char *ext) {
+    static volatile LONG seed_init = 0;
+    if (InterlockedCompareExchange(&seed_init, 1, 0) == 0)
+        srand((unsigned)(time(NULL) ^ (unsigned)GetCurrentProcessId()));
+    unsigned long r1 = (unsigned long)rand() ^ ((unsigned long)(time(NULL) & 0xFFFF));
+    unsigned long r2 = (unsigned long)rand() ^ (unsigned long)GetTickCount();
+    snprintf(out, cap, "img_%08lx%08lx.%s", r1, r2, ext);
+}
+
+static const char *mime_to_ext(const char *mime) {
+    if (!_stricmp(mime, "image/jpeg") || !_stricmp(mime, "image/jpg")) return "jpg";
+    if (!_stricmp(mime, "image/png"))  return "png";
+    if (!_stricmp(mime, "image/webp")) return "webp";
+    return NULL;
+}
+
+static void serve_upload_file(SOCKET client, const char *filename) {
+    for (const char *p = filename; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (!isalnum(c) && c != '_' && c != '-' && c != '.') {
+            json_error(client, 400, "Bad Request", "Invalid upload filename");
+            return;
+        }
+    }
+    if (strstr(filename, "..")) {
+        json_error(client, 400, "Bad Request", "Invalid upload filename");
+        return;
+    }
+    char path[512];
+    snprintf(path, sizeof(path), "%s\\%s", UPLOADS_DIR, filename);
+    FILE *f = fopen(path, "rb");
+    if (!f) { http_response(client, 404, "Not Found", "text/plain", "Upload not found"); return; }
+    fseek(f, 0, SEEK_END);
+    long flen = ftell(f);
+    rewind(f);
+    if (flen < 0 || flen > MAX_UPLOAD_BYTES + 1024) {
+        fclose(f);
+        http_response(client, 413, "Payload Too Large", "text/plain", "File too large");
+        return;
+    }
+    char *data = (char *)malloc((size_t)flen);
+    if (!data) { fclose(f); json_error(client, 500, "Internal Server Error", "OOM"); return; }
+    size_t got = fread(data, 1, (size_t)flen, f);
+    fclose(f);
+    const char *dot = strrchr(filename, '.');
+    const char *type = "application/octet-stream";
+    if (dot) {
+        if (!_stricmp(dot, ".jpg") || !_stricmp(dot, ".jpeg")) type = "image/jpeg";
+        else if (!_stricmp(dot, ".png"))  type = "image/png";
+        else if (!_stricmp(dot, ".webp")) type = "image/webp";
+    }
+    char hdr[512];
+    int h = snprintf(hdr, sizeof(hdr),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %lu\r\n"
+        "Cache-Control: no-store\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "Connection: close\r\n\r\n",
+        type, (unsigned long)got);
+    if (h > 0 && h < (int)sizeof(hdr)) {
+        send_all(client, hdr, h);
+        if (got) send_all(client, data, (int)got);
+    }
+    free(data);
+}
+
+static void handle_upload_image(SOCKET client, const char *body) {
+    char mime[64] = {0};
+    if (!json_get_string(body, "mimeType", mime, sizeof(mime))) {
+        json_error(client, 400, "Bad Request", "Missing mimeType"); return;
+    }
+    const char *ext = mime_to_ext(mime);
+    if (!ext) {
+        json_error(client, 415, "Unsupported Media Type",
+                   "Only image/jpeg, image/png and image/webp are accepted");
+        return;
+    }
+    /* Locate "imageData" key manually — value may be very long */
+    const char *needle = "\"imageData\"";
+    const char *p = strstr(body, needle);
+    if (!p) { json_error(client, 400, "Bad Request", "Missing imageData"); return; }
+    p += strlen(needle);
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (*p++ != ':') { json_error(client, 400, "Bad Request", "Bad imageData format"); return; }
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (*p == '"') p++;
+    /* Skip optional data: URI header (data:image/jpeg;base64,) */
+    if (!strncmp(p, "data:", 5)) {
+        const char *comma = strchr(p, ',');
+        if (comma) p = comma + 1;
+    }
+    const char *b64_start = p;
+    while (*p && *p != '"') p++;
+    size_t b64_len = (size_t)(p - b64_start);
+    if (b64_len == 0) { json_error(client, 400, "Bad Request", "Empty imageData"); return; }
+    if (b64_len > (size_t)MAX_B64_UPLOAD) {
+        json_error(client, 413, "Payload Too Large", "Image exceeds 5 MB limit"); return;
+    }
+    size_t out_cap = (b64_len / 4) * 3 + 16;
+    unsigned char *imgbuf = (unsigned char *)malloc(out_cap);
+    if (!imgbuf) { json_error(client, 500, "Internal Server Error", "OOM"); return; }
+    int decoded = b64_decode(b64_start, b64_len, imgbuf, out_cap);
+    if (decoded < 0 || decoded > MAX_UPLOAD_BYTES) {
+        free(imgbuf);
+        json_error(client, 413, "Payload Too Large",
+                   decoded < 0 ? "Invalid base64 data" : "Image exceeds 5 MB limit");
+        return;
+    }
+    char filename[64];
+    gen_upload_filename(filename, sizeof(filename), ext);
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "%s\\%s", UPLOADS_DIR, filename);
+    FILE *f = fopen(filepath, "wb");
+    if (!f) {
+        free(imgbuf);
+        json_error(client, 500, "Internal Server Error", "Could not write upload file");
+        return;
+    }
+    fwrite(imgbuf, 1, (size_t)decoded, f);
+    fclose(f);
+    free(imgbuf);
+    char resp[256];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"imageRef\":\"%s\"}", filename);
+    http_response(client, 200, "OK", "application/json; charset=utf-8", resp);
+}
+
 static void serve_file(
     SOCKET client,
     const char *url_path
@@ -803,6 +980,12 @@ static void serve_file(
         else if (!_stricmp(dot, ".jpg") ||
                  !_stricmp(dot, ".jpeg"))
             type = "image/jpeg";
+        else if (!_stricmp(dot, ".webp"))
+            type = "image/webp";
+        else if (!_stricmp(dot, ".json"))
+            type = "application/json; charset=utf-8";
+        else if (!_stricmp(dot, ".bin"))
+            type = "application/octet-stream";
         else if (!_stricmp(dot, ".ico"))
             type = "image/x-icon";
     }
@@ -838,6 +1021,14 @@ static void handle_request(
     char method[16] = {0};
     char path[2048] = {0};
 
+    /* Single heap-allocated reply buffer shared by all tcp_exchange calls.
+       Avoids placing 8+ × 128 KB arrays on the thread stack (stack overflow). */
+    char *reply = (char *)calloc(1, MAX_REPLY);
+    if (!reply) {
+        json_error(client, 500, "Internal Server Error", "Out of memory");
+        return;
+    }
+
     char *body = strstr(req, "\r\n\r\n");
 
     if (!body) {
@@ -848,6 +1039,7 @@ static void handle_request(
             "Malformed HTTP request"
         );
 
+        free(reply);
         return;
     }
 
@@ -870,6 +1062,7 @@ static void handle_request(
             ""
         );
 
+        free(reply);
         return;
     }
 
@@ -935,17 +1128,34 @@ static void handle_request(
             response
         );
 
+        free(reply);
         return;
     }
 
-    if (!strcmp(method, "GET")) {
+    if (!strcmp(method, "GET") || !strcmp(method, "HEAD")) {
         char *q = strchr(path, '?');
 
         if (q)
             *q = '\0';
 
+        /* Serve uploaded images from the uploads/ directory */
+        if (!strncmp(path, "/uploads/", 9)) {
+            serve_upload_file(client, path + 9);
+            free(reply);
+            return;
+        }
+
         serve_file(client, path);
 
+        free(reply);
+        return;
+    }
+
+    /* ── Handle image upload (no session required) ─────────── */
+    if (!strcmp(method, "POST") && !strcmp(path, "/api/upload-image")) {
+        /* Content-Length check: allow up to MAX_B64_UPLOAD + JSON overhead */
+        handle_upload_image(client, body);
+        free(reply);
         return;
     }
 
@@ -957,12 +1167,11 @@ static void handle_request(
             "Method not allowed"
         );
 
+        free(reply);
         return;
     }
 
     char sid[128] = {0};
-    char msg[MAX_BODY + 1] = {0};
-    char recipient[128] = "all";
 
     if (!json_get_string(
         body,
@@ -977,6 +1186,7 @@ static void handle_request(
             "Invalid session id"
         );
 
+        free(reply);
         return;
     }
 
@@ -990,6 +1200,7 @@ static void handle_request(
             "Session limit reached"
         );
 
+        free(reply);
         return;
     }
 
@@ -999,20 +1210,22 @@ static void handle_request(
         !strcmp(path, "/api/network-info")) {
         int is_tcp_test = !strcmp(path, "/api/tcp-test");
         const char *command = is_tcp_test ? "PING" : "STATS";
-        char reply[MAX_REPLY] = {0};
+        memset(reply, 0, MAX_REPLY);
         int closed = 0;
         EnterCriticalSection(&sess->lock);
-        int result = tcp_exchange(sess, command, reply, sizeof(reply), &closed);
+        int result = tcp_exchange(sess, command, reply, MAX_REPLY, &closed);
         LeaveCriticalSection(&sess->lock);
         if (result <= 0) {
             json_error(client, result == 0 ? 504 : 502,
                        result == 0 ? "Gateway Timeout" : "Bad Gateway",
                        result == 0 ? "The C server did not reply in time" :
                            "Cannot reach the C TCP server. Is server.exe running?");
+            free(reply);
             return;
         }
         if (is_tcp_test) {
             http_response(client, 200, "OK", "application/json; charset=utf-8", reply);
+            free(reply);
             return;
         }
 
@@ -1026,6 +1239,7 @@ static void handle_request(
                              sizeof(bind_address))) {
             json_error(client, 502, "Bad Gateway",
                        "The C server returned invalid network information");
+            free(reply);
             return;
         }
         char response[512];
@@ -1037,6 +1251,7 @@ static void handle_request(
                  bind_address, C_HOST, C_HOST, HTTP_PORT, tcp_port, udp_port,
                  active_clients, max_clients);
         http_response(client, 200, "OK", "application/json; charset=utf-8", response);
+        free(reply);
         return;
     }
 
@@ -1045,11 +1260,13 @@ static void handle_request(
         char locality[256] = {0};
         char latitude[64] = {0};
         char longitude[64] = {0};
+        char accuracy[64] = {0};
         char severity[32] = {0};
         char traffic[32] = {0};
         char immediate_danger[16] = {0};
         char description[512] = {0};
-        char command[1024];
+        char image_ref[128] = {0};  /* optional: imageRef from prior upload */
+        char command[1500];
 
         if (!json_get_string(body, "road", road, sizeof(road)) ||
             !json_get_string(body, "locality", locality, sizeof(locality)) ||
@@ -1071,22 +1288,70 @@ static void handle_request(
              _stricmp(immediate_danger, "No")) ||
             !valid_report_value(description, 280)) {
             json_error(client, 400, "Bad Request", "Check the report fields and length limits");
+            free(reply);
             return;
         }
 
-        int command_len = snprintf(command, sizeof(command),
+        /* Optional GPS accuracy */
+        json_get_string(body, "accuracy", accuracy, sizeof(accuracy));
+        if (accuracy[0]) {
+            if (!latitude[0] || !valid_optional_report_value(accuracy, 32)) {
+                json_error(client, 400, "Bad Request", "Invalid GPS accuracy value");
+                free(reply);
+                return;
+            }
+            double acc_val = -1.0;
+            if (sscanf(accuracy, "%lf", &acc_val) != 1 || acc_val < 0.0) {
+                json_error(client, 400, "Bad Request", "GPS accuracy must be a non-negative number");
+                free(reply);
+                return;
+            }
+        }
+
+        /* Optional imageRef (from /api/upload-image response) */
+        json_get_string(body, "imageRef", image_ref, sizeof(image_ref));
+        /* Validate imageRef if supplied: only safe characters */
+        for (size_t i = 0; i < strlen(image_ref); i++) {
+            unsigned char c = (unsigned char)image_ref[i];
+            if (!isalnum(c) && c != '_' && c != '-' && c != '.') {
+                image_ref[0] = '\0'; /* discard invalid ref silently */
+                break;
+            }
+        }
+        /* Reject path traversal in imageRef */
+        if (strstr(image_ref, "..")) image_ref[0] = '\0';
+
+        int command_len;
+        if (accuracy[0] || (latitude[0] && image_ref[0])) {
+            /* Use REPORT_V3 when accuracy is provided, or both coordinates and imageRef */
+            command_len = snprintf(command, sizeof(command),
+                                   "REPORT_V3|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+                                   severity, traffic, road, locality, latitude,
+                                   longitude, accuracy, description, immediate_danger,
+                                   image_ref);
+        } else if (image_ref[0]) {
+            /* Use REPORT_V2 when an image is attached without accuracy */
+            command_len = snprintf(command, sizeof(command),
+                                   "REPORT_V2|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+                                   severity, traffic, road, locality, latitude,
+                                   longitude, description, immediate_danger,
+                                   image_ref);
+        } else {
+            command_len = snprintf(command, sizeof(command),
                                    "REPORT|%s|%s|%s|%s|%s|%s|%s|%s",
                                    severity, traffic, road, locality, latitude,
                                    longitude, description, immediate_danger);
+        }
         if (command_len < 0 || command_len >= (int)sizeof(command)) {
             json_error(client, 413, "Payload Too Large", "Report is too large");
+            free(reply);
             return;
         }
 
-        char reply[MAX_REPLY] = {0};
+        memset(reply, 0, MAX_REPLY);
         int closed = 0;
         EnterCriticalSection(&sess->lock);
-        int result = tcp_exchange(sess, command, reply, sizeof(reply), &closed);
+        int result = tcp_exchange(sess, command, reply, MAX_REPLY, &closed);
         LeaveCriticalSection(&sess->lock);
 
         if (result <= 0) {
@@ -1094,9 +1359,11 @@ static void handle_request(
                        result == 0 ? "Gateway Timeout" : "Bad Gateway",
                        result == 0 ? "The C server did not reply in time" :
                            "Cannot reach the C TCP server. Is server.exe running?");
+            free(reply);
             return;
         }
         http_response(client, 200, "OK", "application/json; charset=utf-8", reply);
+        free(reply);
         return;
     }
 
@@ -1106,22 +1373,25 @@ static void handle_request(
         if (!json_get_string(body, "id", id, sizeof(id)) ||
             !valid_report_value(id, 19)) {
             json_error(client, 400, "Bad Request", "Invalid report ID");
+            free(reply);
             return;
         }
         snprintf(command, sizeof(command), "DETAIL|%s", id);
-        char reply[MAX_REPLY] = {0};
+        memset(reply, 0, MAX_REPLY);
         int closed = 0;
         EnterCriticalSection(&sess->lock);
-        int result = tcp_exchange(sess, command, reply, sizeof(reply), &closed);
+        int result = tcp_exchange(sess, command, reply, MAX_REPLY, &closed);
         LeaveCriticalSection(&sess->lock);
         if (result <= 0) {
             json_error(client, result == 0 ? 504 : 502,
                        result == 0 ? "Gateway Timeout" : "Bad Gateway",
                        result == 0 ? "The C server did not reply in time" :
                            "Cannot reach the C TCP server. Is server.exe running?");
+            free(reply);
             return;
         }
         http_response(client, 200, "OK", "application/json; charset=utf-8", reply);
+        free(reply);
         return;
     }
 
@@ -1134,30 +1404,33 @@ static void handle_request(
             !valid_report_value(id, 19) ||
             !valid_report_value(status, 20)) {
             json_error(client, 400, "Bad Request", "Status update fields are invalid");
+            free(reply);
             return;
         }
         snprintf(command, sizeof(command), "STATUS|%s|%s", id, status);
-        char reply[MAX_REPLY] = {0};
+        memset(reply, 0, MAX_REPLY);
         int closed = 0;
         EnterCriticalSection(&sess->lock);
-        int result = tcp_exchange(sess, command, reply, sizeof(reply), &closed);
+        int result = tcp_exchange(sess, command, reply, MAX_REPLY, &closed);
         LeaveCriticalSection(&sess->lock);
         if (result <= 0) {
             json_error(client, result == 0 ? 504 : 502,
                        result == 0 ? "Gateway Timeout" : "Bad Gateway",
                        result == 0 ? "The C server did not reply in time" :
                            "Cannot reach the C TCP server. Is server.exe running?");
+            free(reply);
             return;
         }
         http_response(client, 200, "OK", "application/json; charset=utf-8", reply);
+        free(reply);
         return;
     }
 
     if (!strcmp(path, "/api/reports")) {
-        char reply[MAX_REPLY] = {0};
+        memset(reply, 0, MAX_REPLY);
         int closed = 0;
         EnterCriticalSection(&sess->lock);
-        int result = tcp_exchange(sess, "LIST", reply, sizeof(reply), &closed);
+        int result = tcp_exchange(sess, "LIST", reply, MAX_REPLY, &closed);
         LeaveCriticalSection(&sess->lock);
 
         if (result <= 0) {
@@ -1165,9 +1438,11 @@ static void handle_request(
                        result == 0 ? "Gateway Timeout" : "Bad Gateway",
                        result == 0 ? "The C server did not reply in time" :
                            "Cannot reach the C TCP server. Is server.exe running?");
+            free(reply);
             return;
         }
         http_response(client, 200, "OK", "application/json; charset=utf-8", reply);
+        free(reply);
         return;
     }
 
@@ -1180,39 +1455,44 @@ static void handle_request(
             !valid_report_value(road, 120) ||
             !valid_report_value(locality, 120)) {
             json_error(client, 400, "Bad Request", "Road and locality are required");
+            free(reply);
             return;
         }
         snprintf(command, sizeof(command), "CHECK|%s|%s", road, locality);
-        char reply[MAX_REPLY] = {0};
+        memset(reply, 0, MAX_REPLY);
         int closed = 0;
         EnterCriticalSection(&sess->lock);
-        int result = tcp_exchange(sess, command, reply, sizeof(reply), &closed);
+        int result = tcp_exchange(sess, command, reply, MAX_REPLY, &closed);
         LeaveCriticalSection(&sess->lock);
         if (result <= 0) {
             json_error(client, result == 0 ? 504 : 502,
                        result == 0 ? "Gateway Timeout" : "Bad Gateway",
                        result == 0 ? "The C server did not reply in time" :
                            "Cannot reach the C TCP server. Is server.exe running?");
+            free(reply);
             return;
         }
         http_response(client, 200, "OK", "application/json; charset=utf-8", reply);
+        free(reply);
         return;
     }
 
     if (!strcmp(path, "/api/udp-alerts")) {
-        char reply[MAX_REPLY] = {0};
+        memset(reply, 0, MAX_REPLY);
         int closed = 0;
         EnterCriticalSection(&sess->lock);
-        int result = tcp_exchange(sess, "ALERTS", reply, sizeof(reply), &closed);
+        int result = tcp_exchange(sess, "ALERTS", reply, MAX_REPLY, &closed);
         LeaveCriticalSection(&sess->lock);
         if (result <= 0) {
             json_error(client, result == 0 ? 504 : 502,
                        result == 0 ? "Gateway Timeout" : "Bad Gateway",
                        result == 0 ? "The C server did not reply in time" :
                            "Cannot reach the C TCP server. Is server.exe running?");
+            free(reply);
             return;
         }
         http_response(client, 200, "OK", "application/json; charset=utf-8", reply);
+        free(reply);
         return;
     }
 
@@ -1239,14 +1519,17 @@ static void handle_request(
              _stricmp(immediate_danger, "No"))) {
             json_error(client, 400, "Bad Request",
                        "Enter valid road, locality, severity, traffic, and danger values");
+            free(reply);
             return;
         }
         if (!send_udp_alert(severity, traffic, immediate_danger, road, locality)) {
             json_error(client, 502, "Bad Gateway", "Winsock could not send the UDP datagram");
+            free(reply);
             return;
         }
         http_response(client, 200, "OK", "application/json; charset=utf-8",
                       "{\"ok\":true,\"sent\":true,\"deliveryGuaranteed\":false,\"confirmed\":false}");
+        free(reply);
         return;
     }
 
@@ -1260,6 +1543,7 @@ static void handle_request(
             (_stricmp(status, "Pending") && _stricmp(status, "Under Review") &&
              _stricmp(status, "In Progress") && _stricmp(status, "Resolved"))) {
             json_error(client, 400, "Bad Request", "Invalid alert ID or status value");
+            free(reply);
             return;
         }
 
@@ -1274,30 +1558,40 @@ static void handle_request(
                          "{\"ok\":true,\"id\":\"%s\",\"status\":\"%s\",\"confirmed\":true}",
                          ack_id, ack_status);
                 http_response(client, 200, "OK", "application/json; charset=utf-8", json);
+                free(reply);
                 return;
             } else if (!strncmp(udp_response, "NACK|", 5)) {
                 json_error(client, 404, "Not Found", udp_response + 5);
+                free(reply);
                 return;
             } else {
                 json_error(client, 500, "Internal Server Error", "Unexpected UDP server response");
+                free(reply);
                 return;
             }
         } else if (res == 2) {
             json_error(client, 504, "Gateway Timeout",
                        "No UDP status acknowledgement received within 3 seconds; delivery is unconfirmed");
+            free(reply);
             return;
         } else {
             json_error(client, 502, "Bad Gateway", "Winsock could not complete the UDP status operation");
+            free(reply);
             return;
         }
     }
 
     if (!strcmp(path, "/api/clients")) {
-        char response[32768];
+        char *response = (char *)malloc(32768);
+        if (!response) {
+            json_error(client, 500, "Internal Server Error", "Out of memory");
+            free(reply);
+            return;
+        }
 
         size_t used = (size_t)snprintf(
             response,
-            sizeof(response),
+            32768,
             "{\"ok\":true,\"clients\":["
         );
 
@@ -1331,10 +1625,10 @@ static void handle_request(
             }
 
             if (used + strlen(ei) +
-                strlen(el) + 80 < sizeof(response)) {
+                strlen(el) + 80 < 32768) {
                 used += (size_t)snprintf(
                     response + used,
-                    sizeof(response) - used,
+                    32768 - used,
                     "%s{\"id\":\"%s\",\"label\":\"%s\"}",
                     online > 1 ? "," : "",
                     ei,
@@ -1352,7 +1646,7 @@ static void handle_request(
 
         snprintf(
             response + used,
-            sizeof(response) - used,
+            32768 - used,
             "],\"online\":%d}",
             online
         );
@@ -1365,15 +1659,22 @@ static void handle_request(
             response
         );
 
+        free(response);
+        free(reply);
         return;
     }
 
     if (!strcmp(path, "/api/inbox")) {
-        char response[32768];
+        char *response = (char *)malloc(32768);
+        if (!response) {
+            json_error(client, 500, "Internal Server Error", "Out of memory");
+            free(reply);
+            return;
+        }
 
         size_t used = (size_t)snprintf(
             response,
-            sizeof(response),
+            32768,
             "{\"ok\":true,\"messages\":["
         );
 
@@ -1395,10 +1696,10 @@ static void handle_request(
             char *escaped = json_escape(m->text);
 
             if (escaped &&
-                used + strlen(escaped) + 100 < sizeof(response)) {
+                used + strlen(escaped) + 100 < 32768) {
                 used += (size_t)snprintf(
                     response + used,
-                    sizeof(response) - used,
+                    32768 - used,
                     "%s{\"sender\":\"%s\",\"message\":\"%s\"}",
                     first ? "" : ",",
                     m->sender,
@@ -1417,7 +1718,7 @@ static void handle_request(
 
         snprintf(
             response + used,
-            sizeof(response) - used,
+            32768 - used,
             "]}"
         );
 
@@ -1429,6 +1730,8 @@ static void handle_request(
             response
         );
 
+        free(response);
+        free(reply);
         return;
     }
 
@@ -1453,10 +1756,14 @@ static void handle_request(
             "{\"ok\":true}"
         );
 
+        free(reply);
         return;
     }
 
     if (!strcmp(path, "/api/send")) {
+        char msg[MAX_BODY + 1] = {0};
+        char recipient[128] = "all";
+
         if (!json_get_string(
             body,
             "message",
@@ -1470,6 +1777,7 @@ static void handle_request(
                 "Message must be text"
             );
 
+            free(reply);
             return;
         }
 
@@ -1481,6 +1789,7 @@ static void handle_request(
                 "Message too large (bridge limit 4096 bytes)"
             );
 
+            free(reply);
             return;
         }
 
@@ -1494,6 +1803,7 @@ static void handle_request(
                     "Message cannot contain line breaks or control characters"
                 );
 
+                free(reply);
                 return;
             }
         }
@@ -1513,6 +1823,7 @@ static void handle_request(
                     "Invalid recipient"
                 );
 
+                free(reply);
                 return;
             }
         }
@@ -1540,11 +1851,12 @@ static void handle_request(
                     "That client is no longer online. Choose another recipient."
                 );
 
+                free(reply);
                 return;
             }
         }
 
-        char reply[MAX_REPLY] = {0};
+        memset(reply, 0, MAX_REPLY);
         int closed = 0;
 
         EnterCriticalSection(&sess->lock);
@@ -1553,7 +1865,7 @@ static void handle_request(
             sess,
             msg,
             reply,
-            sizeof(reply),
+            MAX_REPLY,
             &closed
         );
 
@@ -1567,6 +1879,7 @@ static void handle_request(
                 "The C server did not reply in time"
             );
 
+            free(reply);
             return;
         }
 
@@ -1578,6 +1891,7 @@ static void handle_request(
                 "Cannot reach the C server. Is server.exe running?"
             );
 
+            free(reply);
             return;
         }
 
@@ -1622,6 +1936,7 @@ static void handle_request(
                 "Out of memory"
             );
 
+            free(reply);
             return;
         }
 
@@ -1639,6 +1954,7 @@ static void handle_request(
                 "Out of memory"
             );
 
+            free(reply);
             return;
         }
 
@@ -1662,6 +1978,7 @@ static void handle_request(
 
         free(er);
         free(response);
+        free(reply);
 
         return;
     }
@@ -1672,14 +1989,18 @@ static void handle_request(
         "Not Found",
         "Unknown API endpoint"
     );
+    free(reply);
 }
 
 static DWORD WINAPI client_thread(LPVOID param) {
     SOCKET client = (SOCKET)(uintptr_t)param;
 
+    int max_request = MAX_REQUEST;
+    int max_body = MAX_BODY;
+
     char *request = (char *)calloc(
         1,
-        MAX_REQUEST + 1
+        max_request + 1
     );
 
     if (request) {
@@ -1687,11 +2008,11 @@ static DWORD WINAPI client_thread(LPVOID param) {
         int header_end = 0;
         int content_length = 0;
 
-        while (total < MAX_REQUEST) {
+        while (total < max_request) {
             int n = recv(
                 client,
                 request + total,
-                MAX_REQUEST - total,
+                max_request - total,
                 0
             );
 
@@ -1710,6 +2031,10 @@ static DWORD WINAPI client_thread(LPVOID param) {
                 header_end = (int)(
                     end + 4 - request
                 );
+
+                if (strstr(request, "/api/upload-image") != NULL) {
+                    max_body = (int)MAX_B64_UPLOAD + 16384;
+                }
 
                 char *cl =
                     _strnicmp(
@@ -1746,8 +2071,18 @@ static DWORD WINAPI client_thread(LPVOID param) {
                     content_length = atoi(cl);
 
                 if (content_length < 0 ||
-                    content_length > MAX_BODY) {
+                    content_length > max_body) {
                     break;
+                }
+
+                if (header_end + content_length > max_request) {
+                    int needed = header_end + content_length + 64;
+                    char *grown = (char *)realloc(request, (size_t)needed + 1);
+                    if (!grown) {
+                        break;
+                    }
+                    request = grown;
+                    max_request = needed;
                 }
             }
 
@@ -1757,7 +2092,7 @@ static DWORD WINAPI client_thread(LPVOID param) {
             }
 
             if (!header_end &&
-                total >= MAX_REQUEST) {
+                total >= max_request) {
                 break;
             }
         }
@@ -1838,6 +2173,9 @@ int main(void) {
         fprintf(stderr, "WSAStartup failed.\n");
         return 1;
     }
+
+    /* Ensure uploads directory exists */
+    _mkdir(UPLOADS_DIR);
 
     InitializeCriticalSection(&sessions_lock);
 

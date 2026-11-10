@@ -13,3 +13,7 @@ __pycache__/
 # IDE / Editor folders
 .vscode/
 .idea/
+
+# Runtime uploads
+uploads/*
+!uploads/.gitkeep

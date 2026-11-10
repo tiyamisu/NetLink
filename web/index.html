@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -154,6 +155,65 @@
             </div>
 
             <form id="reportForm" novalidate>
+              <input type="hidden" id="accuracyInput">
+
+              <!-- ── Automatic GPS Location Tracker ──────────────────── -->
+              <div class="location-tracker-card" id="locationTrackerCard">
+                <div class="location-tracker-header">
+                  <div class="location-tracker-title">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                      <circle cx="12" cy="10" r="3"></circle>
+                    </svg>
+                    <span>Location Details &amp; GPS Tracker</span>
+                  </div>
+                  <span class="location-tracker-badge" id="gpsBadge">GPS Ready</span>
+                </div>
+
+                <div class="location-tracker-body">
+                  <div class="location-action-row">
+                    <button type="button" class="btn btn-primary btn-detect-gps" id="btnDetectGps">
+                      <span class="gps-btn-icon">📍</span>
+                      <span id="btnDetectGpsText">Detect My Location</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshGps" style="display:none;" title="Re-detect GPS location">
+                      🔄 Refresh GPS
+                    </button>
+                  </div>
+
+                  <!-- Status message -->
+                  <div class="location-status-bar" id="locationStatusBar" aria-live="polite">
+                    <span class="location-status-dot ready" id="locationStatusDot"></span>
+                    <span id="locationStatusText">Click "Detect My Location" to obtain GPS coordinates and auto-identify road &amp; locality.</span>
+                  </div>
+
+                  <!-- Coordinates & Accuracy Readout -->
+                  <div class="gps-readout-grid" id="gpsReadoutGrid">
+                    <div class="gps-readout-item">
+                      <span class="gps-readout-label">Latitude</span>
+                      <span class="gps-readout-val" id="gpsLatDisplay">—</span>
+                    </div>
+                    <div class="gps-readout-item">
+                      <span class="gps-readout-label">Longitude</span>
+                      <span class="gps-readout-val" id="gpsLonDisplay">—</span>
+                    </div>
+                    <div class="gps-readout-item">
+                      <span class="gps-readout-label">GPS Accuracy</span>
+                      <span class="gps-readout-val" id="gpsAccuracyDisplay">—</span>
+                    </div>
+                  </div>
+
+                  <!-- Suggestion alert if user already typed -->
+                  <div class="reverse-geocode-alert" id="geoSuggestionBanner" hidden>
+                    <span id="geoSuggestionText"></span>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btnApplySuggestion">Apply to Form</button>
+                  </div>
+
+                  <!-- Compact Map Preview -->
+                  <div id="mapPreview" class="gps-map-preview" hidden></div>
+                </div>
+              </div>
+
               <div class="form-row">
                 <div class="form-group">
                   <label for="roadInput">Road / Street <span class="required">*</span></label>
@@ -208,6 +268,80 @@
               <div class="form-group">
                 <label for="descriptionInput">Description <span class="required">*</span></label>
                 <textarea id="descriptionInput" maxlength="280" required rows="3" placeholder="Briefly describe the pothole, its location and size"></textarea>
+              </div>
+
+              <!-- ── Image Upload + AI Recognition ─────────── -->
+              <div class="img-upload-card" id="imageUploadCard">
+                <div class="img-upload-header">
+                  <span class="img-upload-title">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                    Photo Evidence
+                  </span>
+                  <span class="img-upload-badge">AI Recognition</span>
+                </div>
+
+                <div class="img-drop-zone" id="imgDropZone" role="button" tabindex="0" aria-label="Upload road image">
+                  <input type="file" id="imgFileInput" accept=".jpg,.jpeg,.png,.webp" aria-hidden="true" style="display:none">
+                  <div class="img-drop-idle" id="imgDropIdle">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <p>Drag &amp; drop a road photo here</p>
+                    <p class="img-drop-hint">or <strong>click to browse</strong> &nbsp;·&nbsp; JPG PNG WEBP &nbsp;·&nbsp; max 5 MB</p>
+                  </div>
+                </div>
+
+                <div class="img-preview-wrap" id="imgPreviewWrap" hidden>
+                  <div class="img-preview-container">
+                    <img id="imgPreview" class="img-preview" alt="Road photo preview">
+                  </div>
+                  <div class="img-preview-meta">
+                    <span id="imgFileName" class="img-meta-name"></span>
+                    <span id="imgFileSize" class="img-meta-size"></span>
+                    <button type="button" class="btn btn-ghost btn-sm img-remove-btn" id="imgRemoveBtn">Remove</button>
+                  </div>
+                </div>
+
+                <div class="ai-result-panel" id="aiResultPanel" hidden>
+                  <div class="ai-result-header">
+                    <span class="ai-label">AI Pothole Detection</span>
+                  </div>
+                  <div id="aiLoading" class="ai-loading" hidden>
+                    <div class="ai-spinner"></div>
+                    <span>Running inference…</span>
+                  </div>
+                  <div id="aiOutcome" hidden>
+                    <div class="ai-outcome-row">
+                      <span class="ai-outcome-icon" id="aiOutcomeIcon"></span>
+                      <span class="ai-outcome-label" id="aiOutcomeLabel"></span>
+                    </div>
+                    <div class="ai-confidence-text" id="aiConfidenceText">
+                      Pothole Confidence: <strong id="aiConfidencePct">—</strong>
+                    </div>
+                    <div class="ai-confidence-bar-wrap" id="aiConfidenceWrap">
+                      <div class="ai-confidence-bar-track">
+                        <div class="ai-confidence-bar-fill" id="aiConfidenceFill"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="aiError" class="ai-error-msg" hidden></div>
+                </div>
+
+                <div class="img-upload-status" id="imgUploadStatus" hidden>
+                  <span id="imgUploadStatusText"></span>
+                </div>
+              </div>
+              <!-- ── End Image Upload ─────────────────────── -->
+
+              <div id="aiRejectWarning" class="warning-box" hidden>
+                <div class="warning-icon">⚠️</div>
+                <div>
+                  <strong>No Pothole Detected by AI</strong>
+                  <p id="aiRejectMessage">The selected photograph was classified as normal road with low pothole confidence.</p>
+                  <p class="warning-note">Please ensure the photograph clearly shows road damage, or click "Submit Anyway" if you believe this is a genuine pothole.</p>
+                  <div class="btn-row">
+                    <button id="continueAiReject" class="btn btn-primary" type="button">Submit Anyway</button>
+                    <button id="cancelAiReject" class="btn btn-ghost" type="button">Change Image</button>
+                  </div>
+                </div>
               </div>
 
               <div id="duplicateWarning" class="warning-box" hidden>
@@ -270,6 +404,12 @@
             <div class="card-header">
               <h2>Send a Quick Alert</h2>
               <span class="protocol-tag udp-tag">UDP Datagram</span>
+            </div>
+
+            <div style="margin-bottom: 14px;">
+              <button type="button" class="btn btn-ghost btn-sm" id="btnUdpDetectGps">
+                📍 Auto-fill from GPS Location
+              </button>
             </div>
 
             <div class="form-group">
@@ -595,6 +735,8 @@
 
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/script.js" defer></script>
 </body>
 </html>

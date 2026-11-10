@@ -48,11 +48,14 @@ typedef struct {
     char locality[MAX_LOCATION + 1];
     char description[MAX_DESCRIPTION + 1];
     char status[20];
+    char image_ref[128];        /* safe filename from uploads/, e.g. "img_abc123.jpg" */
     int priority_score;
     int immediate_danger;
     int has_coordinates;
     double latitude;
     double longitude;
+    int has_accuracy;
+    double accuracy;
     time_t submitted_at;
     time_t status_updated_at;
 } Report;
@@ -185,6 +188,23 @@ static int valid_report_field(const char *s, size_t max_len) {
     return 1;
 }
 
+/* Validate a safe image reference: only alnum, underscore, hyphen, dot.
+   Max 127 chars. Empty string is accepted (means "no image"). */
+static int valid_image_ref(const char *s) {
+    size_t len = strlen(s);
+    if (len == 0) return 1;          /* no image is fine */
+    if (len > 127) return 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (!isalnum(c) && c != '_' && c != '-' && c != '.') return 0;
+    }
+    /* Must have an image extension */
+    const char *dot = strrchr(s, '.');
+    if (!dot) return 0;
+    return !_stricmp(dot, ".jpg") || !_stricmp(dot, ".jpeg") ||
+           !_stricmp(dot, ".png") || !_stricmp(dot, ".webp");
+}
+
 static int append_json_string(char *out, size_t cap, size_t *used, const char *s) {
     if (*used + 2 >= cap) return 0;
     out[(*used)++] = '"';
@@ -271,6 +291,23 @@ static int append_report_json(char *out, size_t cap, size_t *used, const Report 
     if (n < 0 || (size_t)n >= cap - *used) return 0;
     *used += (size_t)n;
     if (!append_json_string(out, cap, used, r->status)) return 0;
+    n = snprintf(out + *used, cap - *used, ",\"imageRef\":");
+    if (n < 0 || (size_t)n >= cap - *used) return 0;
+    *used += (size_t)n;
+    if (r->image_ref[0]) {
+        if (!append_json_string(out, cap, used, r->image_ref)) return 0;
+    } else {
+        if (*used + 5 >= cap) return 0;
+        memcpy(out + *used, "null", 4); *used += 4; out[*used] = '\0';
+    }
+    n = snprintf(out + *used, cap - *used, ",\"accuracy\":");
+    if (n < 0 || (size_t)n >= cap - *used) return 0;
+    *used += (size_t)n;
+    n = r->has_accuracy
+        ? snprintf(out + *used, cap - *used, "%.2f", r->accuracy)
+        : snprintf(out + *used, cap - *used, "null");
+    if (n < 0 || (size_t)n >= cap - *used) return 0;
+    *used += (size_t)n;
     n = snprintf(out + *used, cap - *used,
                  ",\"submittedAt\":%lld,\"statusUpdatedAt\":%lld}",
                  (long long)r->submitted_at, (long long)r->status_updated_at);
@@ -459,6 +496,248 @@ static int process_report(const char *msg, char *resp, size_t cap) {
 
 invalid:
     snprintf(resp, cap, "{\"ok\":false,\"error\":\"Invalid report fields\"}");
+    return 0;
+}
+
+/* REPORT_V2: same as REPORT but accepts an optional 9th field: image_ref.
+   Wire format:
+     REPORT_V2|severity|traffic|road|locality|lat|lon|description|immediatedanger|imageref\n
+   imageref may be empty ("") meaning no image. */
+static int process_report_v2(const char *msg, char *resp, size_t cap) {
+    char fields[MAX_MSG + 1];
+    char *severity, *traffic, *road, *locality, *latitude, *longitude, *description;
+    char *immediate_danger, *image_ref_field;
+    const char *priority, *priority_label;
+    Report report = {0};
+
+    if (strlen(msg) >= sizeof(fields)) {
+        snprintf(resp, cap, "{\"ok\":false,\"error\":\"Report too large\"}");
+        return 0;
+    }
+    /* skip "REPORT_V2|" prefix (10 chars) */
+    strcpy(fields, msg + 10);
+    severity = fields;
+    traffic = strchr(severity, '|');
+    if (!traffic) goto invalid_v2;
+    *traffic++ = '\0';
+    road = strchr(traffic, '|');
+    if (!road) goto invalid_v2;
+    *road++ = '\0';
+    locality = strchr(road, '|');
+    if (!locality) goto invalid_v2;
+    *locality++ = '\0';
+    latitude = strchr(locality, '|');
+    if (!latitude) goto invalid_v2;
+    *latitude++ = '\0';
+    longitude = strchr(latitude, '|');
+    if (!longitude) goto invalid_v2;
+    *longitude++ = '\0';
+    description = strchr(longitude, '|');
+    if (!description) goto invalid_v2;
+    *description++ = '\0';
+    immediate_danger = strchr(description, '|');
+    if (immediate_danger) {
+        *immediate_danger++ = '\0';
+        image_ref_field = strchr(immediate_danger, '|');
+        if (image_ref_field) {
+            *image_ref_field++ = '\0';
+        } else {
+            image_ref_field = (char *)"";
+        }
+        if (!parse_yes_no(immediate_danger, &report.immediate_danger)) goto invalid_v2;
+    } else {
+        image_ref_field = (char *)"";
+    }
+
+    if (!valid_image_ref(image_ref_field)) goto invalid_v2;
+
+    int severity_score = score_level(severity);
+    int traffic_score = score_level(traffic);
+    if (!severity_score || !traffic_score) goto invalid_v2;
+    if (!valid_report_field(road, MAX_LOCATION) ||
+        !valid_report_field(locality, MAX_LOCATION) ||
+        !valid_report_field(description, MAX_DESCRIPTION)) goto invalid_v2;
+    if (!!latitude[0] != !!longitude[0]) goto invalid_v2;
+    if (latitude[0] &&
+        (!parse_coordinate(latitude, -90.0, 90.0, &report.latitude) ||
+         !parse_coordinate(longitude, -180.0, 180.0, &report.longitude))) goto invalid_v2;
+
+    int score = severity_score + traffic_score;
+    if (score == 2) { priority = "LOW"; priority_label = "Low"; }
+    else if (score <= 4) { priority = "MEDIUM"; priority_label = "Medium"; }
+    else if (score == 5) { priority = "HIGH"; priority_label = "High"; }
+    else { priority = "CRITICAL"; priority_label = "Critical"; }
+
+    EnterCriticalSection(&reports_lock);
+    if (report_count >= MAX_REPORTS) {
+        LeaveCriticalSection(&reports_lock);
+        snprintf(resp, cap, "{\"ok\":false,\"error\":\"Report storage is full; restart the server to clear it\"}");
+        return 0;
+    }
+    snprintf(report.id, sizeof(report.id), "PTH-%06d", next_report_id++);
+    normalize_level(report.severity, sizeof(report.severity), severity);
+    normalize_level(report.traffic, sizeof(report.traffic), traffic);
+    snprintf(report.priority, sizeof(report.priority), "%s", priority);
+    report.priority_score = score;
+    snprintf(report.explanation, sizeof(report.explanation),
+             "%s severity + %s traffic = %s priority.",
+             report.severity, report.traffic, priority_label);
+    snprintf(report.suggestion, sizeof(report.suggestion), "%s",
+             report.immediate_danger
+                 ? suggestion_for_priority("CRITICAL", 3)
+                 : suggestion_for_priority(priority, severity_score));
+    snprintf(report.road, sizeof(report.road), "%s", road);
+    snprintf(report.locality, sizeof(report.locality), "%s", locality);
+    snprintf(report.description, sizeof(report.description), "%s", description);
+    snprintf(report.image_ref, sizeof(report.image_ref), "%s", image_ref_field);
+    report.has_coordinates = latitude[0] != '\0';
+    snprintf(report.status, sizeof(report.status), "Pending");
+    report.submitted_at = time(NULL);
+    report.status_updated_at = report.submitted_at;
+    reports[report_count++] = report;
+
+    size_t used = (size_t)snprintf(resp, cap, "{\"ok\":true,\"report\":");
+    int ok = used < cap && append_report_json(resp, cap, &used, &report);
+    if (ok && used + 2 < cap) {
+        resp[used++] = '}';
+        resp[used] = '\0';
+    } else {
+        report_count--;
+        next_report_id--;
+        ok = 0;
+    }
+    LeaveCriticalSection(&reports_lock);
+    if (!ok) snprintf(resp, cap, "{\"ok\":false,\"error\":\"Could not encode report\"}");
+    return 0;
+
+invalid_v2:
+    snprintf(resp, cap, "{\"ok\":false,\"error\":\"Invalid REPORT_V2 fields\"}");
+    return 0;
+}
+
+/* ── Process REPORT_V3 ───────────────────────────────────────
+   Format: REPORT_V3|severity|traffic|road|locality|lat|lon|accuracy|desc|danger|imageRef
+   accuracy may be empty ("") or positive float string (e.g. "14.20")
+   imageRef may be empty ("")
+*/
+static int process_report_v3(const char *msg, char *resp, size_t cap) {
+    char fields[MAX_MSG + 1];
+    char *severity, *traffic, *road, *locality, *latitude, *longitude, *accuracy, *description;
+    char *immediate_danger, *image_ref_field;
+    const char *priority, *priority_label;
+    Report report = {0};
+
+    if (strlen(msg) >= sizeof(fields)) {
+        snprintf(resp, cap, "{\"ok\":false,\"error\":\"Report too large\"}");
+        return 0;
+    }
+    /* skip "REPORT_V3|" prefix (10 chars) */
+    strcpy(fields, msg + 10);
+    severity = fields;
+    traffic = strchr(severity, '|');
+    if (!traffic) goto invalid_v3;
+    *traffic++ = '\0';
+    road = strchr(traffic, '|');
+    if (!road) goto invalid_v3;
+    *road++ = '\0';
+    locality = strchr(road, '|');
+    if (!locality) goto invalid_v3;
+    *locality++ = '\0';
+    latitude = strchr(locality, '|');
+    if (!latitude) goto invalid_v3;
+    *latitude++ = '\0';
+    longitude = strchr(latitude, '|');
+    if (!longitude) goto invalid_v3;
+    *longitude++ = '\0';
+    accuracy = strchr(longitude, '|');
+    if (!accuracy) goto invalid_v3;
+    *accuracy++ = '\0';
+    description = strchr(accuracy, '|');
+    if (!description) goto invalid_v3;
+    *description++ = '\0';
+    immediate_danger = strchr(description, '|');
+    if (immediate_danger) {
+        *immediate_danger++ = '\0';
+        image_ref_field = strchr(immediate_danger, '|');
+        if (image_ref_field) {
+            *image_ref_field++ = '\0';
+        } else {
+            image_ref_field = (char *)"";
+        }
+        if (!parse_yes_no(immediate_danger, &report.immediate_danger)) goto invalid_v3;
+    } else {
+        image_ref_field = (char *)"";
+    }
+
+    if (!valid_image_ref(image_ref_field)) goto invalid_v3;
+
+    int severity_score = score_level(severity);
+    int traffic_score = score_level(traffic);
+    if (!severity_score || !traffic_score) goto invalid_v3;
+    if (!valid_report_field(road, MAX_LOCATION) ||
+        !valid_report_field(locality, MAX_LOCATION) ||
+        !valid_report_field(description, MAX_DESCRIPTION)) goto invalid_v3;
+    if (!!latitude[0] != !!longitude[0]) goto invalid_v3;
+    if (latitude[0] &&
+        (!parse_coordinate(latitude, -90.0, 90.0, &report.latitude) ||
+         !parse_coordinate(longitude, -180.0, 180.0, &report.longitude))) goto invalid_v3;
+
+    report.has_coordinates = latitude[0] != '\0';
+    if (accuracy[0]) {
+        if (!report.has_coordinates || !parse_coordinate(accuracy, 0.0, 1000000.0, &report.accuracy))
+            goto invalid_v3;
+        report.has_accuracy = 1;
+    }
+
+    int score = severity_score + traffic_score;
+    if (score == 2) { priority = "LOW"; priority_label = "Low"; }
+    else if (score <= 4) { priority = "MEDIUM"; priority_label = "Medium"; }
+    else if (score == 5) { priority = "HIGH"; priority_label = "High"; }
+    else { priority = "CRITICAL"; priority_label = "Critical"; }
+
+    EnterCriticalSection(&reports_lock);
+    if (report_count >= MAX_REPORTS) {
+        LeaveCriticalSection(&reports_lock);
+        snprintf(resp, cap, "{\"ok\":false,\"error\":\"Report storage is full; restart the server to clear it\"}");
+        return 0;
+    }
+    snprintf(report.id, sizeof(report.id), "PTH-%06d", next_report_id++);
+    normalize_level(report.severity, sizeof(report.severity), severity);
+    normalize_level(report.traffic, sizeof(report.traffic), traffic);
+    snprintf(report.priority, sizeof(report.priority), "%s", priority);
+    report.priority_score = score;
+    snprintf(report.explanation, sizeof(report.explanation),
+             "%s severity + %s traffic = %s priority.",
+             report.severity, report.traffic, priority_label);
+    snprintf(report.suggestion, sizeof(report.suggestion), "%s",
+             report.immediate_danger
+                 ? suggestion_for_priority("CRITICAL", 3)
+                 : suggestion_for_priority(priority, severity_score));
+    snprintf(report.road, sizeof(report.road), "%s", road);
+    snprintf(report.locality, sizeof(report.locality), "%s", locality);
+    snprintf(report.description, sizeof(report.description), "%s", description);
+    snprintf(report.image_ref, sizeof(report.image_ref), "%s", image_ref_field);
+    snprintf(report.status, sizeof(report.status), "Pending");
+    report.submitted_at = time(NULL);
+    report.status_updated_at = report.submitted_at;
+    reports[report_count++] = report;
+
+    size_t used = (size_t)snprintf(resp, cap, "{\"ok\":true,\"report\":");
+    int ok = used < cap && append_report_json(resp, cap, &used, &report);
+    if (ok && used + 2 < cap) {
+        resp[used++] = '}';
+        resp[used] = '\0';
+    } else {
+        report_count--;
+        next_report_id--;
+        ok = 0;
+    }
+    LeaveCriticalSection(&reports_lock);
+    if (!ok) snprintf(resp, cap, "{\"ok\":false,\"error\":\"Could not encode report\"}");
+    return 0;
+
+invalid_v3:
+    snprintf(resp, cap, "{\"ok\":false,\"error\":\"Invalid REPORT_V3 fields\"}");
     return 0;
 }
 
@@ -691,7 +970,11 @@ invalid:
 
 // builds the reply in resp; returns 1 if the client asked to quit
 static int process(const char *msg, char *resp, size_t n) {
-    if (!strncmp(msg, "REPORT|", 7)) {
+    if (!strncmp(msg, "REPORT_V3|", 10)) {
+        return process_report_v3(msg, resp, n);
+    } else if (!strncmp(msg, "REPORT_V2|", 10)) {
+        return process_report_v2(msg, resp, n);
+    } else if (!strncmp(msg, "REPORT|", 7)) {
         return process_report(msg, resp, n);
     } else if (!strncmp(msg, "DETAIL|", 7)) {
         process_report_detail(msg, resp, n);

@@ -1,0 +1,37 @@
+{
+  "modelName": "NetLink Pothole Classifier",
+  "architecture": "Deep Convolutional Neural Network (4 Conv2D Blocks, Dropout, Dense)",
+  "dataset": {
+    "name": "taroii/pothole-detection",
+    "source": "https://huggingface.co/datasets/taroii/pothole-detection",
+    "license": "Public / Academic Research",
+    "trainCount": 310,
+    "valCount": 55,
+    "testCount": 72,
+    "totalCount": 437
+  },
+  "labels": [
+    "No Pothole",
+    "Pothole"
+  ],
+  "inputShape": [
+    224,
+    224,
+    3
+  ],
+  "metrics": {
+    "testAccuracy": 0.6111,
+    "testPrecision": 0.8,
+    "testRecall": 0.5217,
+    "testF1": 0.6316,
+    "confusionMatrix": {
+      "tp": 24,
+      "tn": 20,
+      "fp": 6,
+      "fn": 22
+    },
+    "testLoss": 0.8033
+  },
+  "trainingDurationSeconds": 114.9,
+  "exportedAt": "2026-11-10T06:58:58Z"
+}

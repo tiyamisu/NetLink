@@ -30,7 +30,9 @@ NetLink provides an intuitive single-page web portal where citizens can submit c
 ## Key Features
 
 - **Live Dashboard**: Real-time overview displaying aggregate statistics (*Total Reports*, *Active*, *Resolved*, *Critical*), an activity feed, and quick-action navigation.
-- **TCP-Based Pothole Reporting**: Complete intake form capturing road name, locality, severity, traffic impact, optional GPS coordinates, and descriptions with client and server-side validation.
+- **Automatic GPS Location Tracker & Reverse Geocoding**: Uses W3C Geolocation API (`enableHighAccuracy: true`) and OpenStreetMap Nominatim to automatically acquire device GPS coordinates, browser-reported accuracy in metres, and reverse-geocode readable road and locality names. Includes an interactive Leaflet map preview and clickable Google Maps links.
+- **AI-Powered Pothole Image Recognition**: Client-side MobileNetV2 Deep CNN binary classifier (TensorFlow.js) that analyzes uploaded road photographs in real time to determine whether a pothole is present with exact confidence probability, backed by a C base64 image upload gateway.
+- **TCP-Based Pothole Reporting (`REPORT_V3`)**: Complete intake form capturing road name, locality, severity, traffic impact, GPS coordinates, GPS accuracy, photo evidence, and descriptions with client and server-side validation.
 - **Server-Generated Report IDs**: Automatically generates sequential, formatted ticket IDs (`PTH-XXXXXX` for TCP reports, `UDP-XXXXXX` for UDP alerts).
 - **Automated Priority Calculation**: Calculates priority levels (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) using an algorithmic matrix combining hazard severity and road traffic density.
 - **Real-Time Duplicate Checking**: Performs asynchronous duplicate lookups (`CHECK|road|locality`) as users type, warning of existing unresolved road tickets.
@@ -153,15 +155,16 @@ Browser                 bridge.exe               server.exe
   │◄────────────────────────┤                        │
 ```
 
-1. **Submission**: User completes the report form in the browser and clicks **Submit Report**.
-2. **HTTP Translation**: The browser sends an HTTP POST to `http://127.0.0.1:5000/api/report`.
-3. **TCP Transmission**: `bridge.exe` formats the payload into a newline-terminated string:
+1. **Submission**: User completes the report form in the browser (or clicks **Detect My Location** for GPS coordinates and reverse geocoding) and clicks **Submit Report**.
+2. **HTTP Translation**: The browser sends an HTTP POST to `http://127.0.0.1:5000/api/report` with JSON payload.
+3. **TCP Transmission**: `bridge.exe` validates coordinates and accuracy, then formats the payload into a newline-terminated string using the `REPORT_V3` protocol:
    ```text
-   REPORT|High|Medium|Ring Road|Hebbal|13.0358|77.5970|Deep crater near underpass|no\n
+   REPORT_V3|High|Medium|Ring Road|Hebbal|13.035800|77.597000|12.50|Deep crater near underpass|no|img_abc123.jpg\n
    ```
-4. **Server Processing**: A dedicated worker thread in `server.exe` reads the stream, computes priority, generates an ID (e.g., `PTH-000001`), and locks the thread-safe store.
+   *(Note: The bridge preserves backward compatibility with `REPORT_V2` for reports with images only, and legacy `REPORT` for text-only submissions from CLI clients).*
+4. **Server Processing**: A dedicated worker thread in `server.exe` reads the stream, computes priority, stores coordinates and accuracy radius, generates an ID (e.g., `PTH-000001`), and locks the thread-safe store.
 5. **Response**: `server.exe` returns a JSON string over the same TCP socket.
-6. **UI Update**: `bridge.exe` passes the response to the browser, updating the dashboard and report tables.
+6. **UI Update**: `bridge.exe` passes the response to the browser, updating the dashboard, report cards, Leaflet map, and Google Maps deep links.
 
 ### 2. UDP Quick Alert Flow
 
