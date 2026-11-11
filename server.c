@@ -79,7 +79,7 @@ static UdpAlert udp_alerts[MAX_UDP_ALERTS];
 static int udp_alert_count = 0;
 static int next_udp_alert_id = 1;
 
-// print a line with a timestamp
+// Prints a timestamp prefix for server console log messages.
 static void print_log_prefix(void) {
     char ts[16];
     time_t t = time(NULL); struct tm tm;
@@ -88,6 +88,7 @@ static void print_log_prefix(void) {
     printf("[%s] ", ts);
 }
 
+// Prints a thread-safe timestamped log message to the console.
 static void slog(const char *fmt, ...) {
     char msg[1500];
     va_list a; va_start(a, fmt); vsnprintf(msg, sizeof msg, fmt, a); va_end(a);
@@ -98,6 +99,7 @@ static void slog(const char *fmt, ...) {
     LeaveCriticalSection(&log_lock);
 }
 
+// Formats and logs an outgoing JSON response for debugging.
 static void slog_json_response(int client_id, const char *response) {
     int depth = 0, in_string = 0, escaped = 0;
     const char *cursor = response;
@@ -151,7 +153,7 @@ static void slog_json_response(int client_id, const char *response) {
     LeaveCriticalSection(&log_lock);
 }
 
-// keep calling send() until every byte has gone out
+// Sends all bytes in the buffer over a TCP socket.
 static int send_all(SOCKET s, const char *buf, int len) {
     int sent = 0;
     while (sent < len) {
@@ -162,8 +164,7 @@ static int send_all(SOCKET s, const char *buf, int len) {
     return 0;
 }
 
-// read one line (up to '\n'). out must hold max+1 bytes.
-// returns length (>=0), -1 = client gone/error, -2 = line was too long
+// Reads a newline-delimited message string from a TCP socket.
 static int recv_line(SOCKET s, char *out, int max) {
     int len = 0, too_long = 0;
     char c;
@@ -178,6 +179,7 @@ static int recv_line(SOCKET s, char *out, int max) {
     return too_long ? -2 : len;
 }
 
+// Validates that a report field is non-empty and contains safe characters.
 static int valid_report_field(const char *s, size_t max_len) {
     size_t len = strlen(s);
     if (!len || len > max_len) return 0;
@@ -188,8 +190,7 @@ static int valid_report_field(const char *s, size_t max_len) {
     return 1;
 }
 
-/* Validate a safe image reference: only alnum, underscore, hyphen, dot.
-   Max 127 chars. Empty string is accepted (means "no image"). */
+// Checks that an image filename contains only safe alphanumeric characters.
 static int valid_image_ref(const char *s) {
     size_t len = strlen(s);
     if (len == 0) return 1;          /* no image is fine */
@@ -205,6 +206,7 @@ static int valid_image_ref(const char *s) {
            !_stricmp(dot, ".png") || !_stricmp(dot, ".webp");
 }
 
+// Appends an escaped string into a JSON output buffer.
 static int append_json_string(char *out, size_t cap, size_t *used, const char *s) {
     if (*used + 2 >= cap) return 0;
     out[(*used)++] = '"';
@@ -228,6 +230,7 @@ static int append_json_string(char *out, size_t cap, size_t *used, const char *s
     return 1;
 }
 
+// Serializes a Report structure into a JSON object string.
 static int append_report_json(char *out, size_t cap, size_t *used, const Report *r) {
     int n = snprintf(out + *used, cap - *used, "{\"id\":");
     if (n < 0 || (size_t)n >= cap - *used) return 0;
@@ -316,6 +319,7 @@ static int append_report_json(char *out, size_t cap, size_t *used, const Report 
     return 1;
 }
 
+// Serializes a UdpAlert structure into a JSON object string.
 static int append_alert_json(char *out, size_t cap, size_t *used, const UdpAlert *alert) {
     int n = snprintf(out + *used, cap - *used, "{\"id\":");
     if (n < 0 || (size_t)n >= cap - *used) return 0;
@@ -354,6 +358,7 @@ static int append_alert_json(char *out, size_t cap, size_t *used, const UdpAlert
     return 1;
 }
 
+// Maps severity and traffic text values to numeric scores.
 static int score_level(const char *value) {
     if (!_stricmp(value, "low")) return 1;
     if (!_stricmp(value, "medium")) return 2;
@@ -361,6 +366,7 @@ static int score_level(const char *value) {
     return 0;
 }
 
+// Parses a Yes or No text value into a boolean flag.
 static int parse_yes_no(const char *value, int *out) {
     if (!_stricmp(value, "yes")) {
         *out = 1;
@@ -373,6 +379,7 @@ static int parse_yes_no(const char *value, int *out) {
     return 0;
 }
 
+// Returns a recommended action text based on report priority and severity.
 static const char *suggestion_for_priority(const char *priority, int severity_score) {
     if (severity_score == 3)
         return "If anyone is hurt or in immediate danger, contact emergency services directly; this demo does not dispatch help. Notify the local road authority.";
@@ -385,12 +392,14 @@ static const char *suggestion_for_priority(const char *priority, int severity_sc
     return "Monitor the pothole and report it again if it worsens.";
 }
 
+// Formats severity or traffic level to standard title-case capitalization.
 static void normalize_level(char *out, size_t cap, const char *input) {
     if (!_stricmp(input, "low")) snprintf(out, cap, "Low");
     else if (!_stricmp(input, "medium")) snprintf(out, cap, "Medium");
     else snprintf(out, cap, "High");
 }
 
+// Parses and validates a geographic coordinate within acceptable range.
 static int parse_coordinate(const char *text, double min, double max, double *value) {
     char *end;
     if (!text[0]) return 0;
@@ -399,6 +408,7 @@ static int parse_coordinate(const char *text, double min, double max, double *va
         *value >= min && *value <= max;
 }
 
+// Parses a legacy REPORT command and saves a new report record.
 static int process_report(const char *msg, char *resp, size_t cap) {
     char fields[MAX_MSG + 1];
     char *severity, *traffic, *road, *locality, *latitude, *longitude, *description;
@@ -503,6 +513,7 @@ invalid:
    Wire format:
      REPORT_V2|severity|traffic|road|locality|lat|lon|description|immediatedanger|imageref\n
    imageref may be empty ("") meaning no image. */
+// Parses a REPORT_V2 command containing an optional image reference.
 static int process_report_v2(const char *msg, char *resp, size_t cap) {
     char fields[MAX_MSG + 1];
     char *severity, *traffic, *road, *locality, *latitude, *longitude, *description;
@@ -620,6 +631,7 @@ invalid_v2:
    accuracy may be empty ("") or positive float string (e.g. "14.20")
    imageRef may be empty ("")
 */
+// Parses a REPORT_V3 command with GPS coordinates, accuracy, and image reference.
 static int process_report_v3(const char *msg, char *resp, size_t cap) {
     char fields[MAX_MSG + 1];
     char *severity, *traffic, *road, *locality, *latitude, *longitude, *accuracy, *description;
@@ -741,6 +753,7 @@ invalid_v3:
     return 0;
 }
 
+// Generates a JSON list of all stored reports for the client.
 static void process_report_list(char *resp, size_t cap) {
     size_t used = (size_t)snprintf(resp, cap, "{\"ok\":true,\"reports\":[");
     int ok = used < cap;
@@ -761,6 +774,7 @@ static void process_report_list(char *resp, size_t cap) {
     }
 }
 
+// Generates a JSON list of recent UDP emergency alerts.
 static void process_udp_alert_list(char *resp, size_t cap) {
     size_t used = (size_t)snprintf(resp, cap, "{\"ok\":true,\"alerts\":[");
     int ok = used < cap;
@@ -782,10 +796,12 @@ static void process_udp_alert_list(char *resp, size_t cap) {
     }
 }
 
+// Compares two location strings case-insensitively for duplicate matching.
 static int same_location_name(const char *left, const char *right) {
     return left[0] && right[0] && _stricmp(left, right) == 0;
 }
 
+// Searches existing reports for potential duplicates at the same location.
 static void process_duplicate_check(const char *msg, char *resp, size_t cap) {
     char fields[MAX_MSG + 1];
     char *road, *locality;
@@ -854,6 +870,7 @@ invalid:
     snprintf(resp, cap, "{\"ok\":false,\"error\":\"Invalid road or locality\"}");
 }
 
+// Validates that a status string matches an allowed lifecycle state.
 static int valid_status(const char *status) {
     return !strcmp(status, "Pending") ||
         !strcmp(status, "Under Review") ||
@@ -861,6 +878,7 @@ static int valid_status(const char *status) {
         !strcmp(status, "Resolved");
 }
 
+// Updates the resolution status of an existing UDP alert record.
 static int process_udp_alert_status(const char *msg, char *response, size_t cap) {
     char fields[128];
     char *id, *status;
@@ -895,6 +913,7 @@ invalid:
     return 0;
 }
 
+// Counts the number of currently active TCP client connections.
 static int active_client_count(void) {
     int active = 0;
     EnterCriticalSection(&lock);
@@ -905,6 +924,7 @@ static int active_client_count(void) {
     return active;
 }
 
+// Finds a report pointer by ID in the shared reports array.
 static Report *find_report_locked(const char *id) {
     for (int i = 0; i < report_count; i++) {
         if (!strcmp(reports[i].id, id)) return &reports[i];
@@ -912,6 +932,7 @@ static Report *find_report_locked(const char *id) {
     return NULL;
 }
 
+// Serializes a single report into a JSON response string.
 static void write_report_response(char *resp, size_t cap, const Report *report) {
     size_t used = (size_t)snprintf(resp, cap, "{\"ok\":true,\"report\":");
     int ok = used < cap && append_report_json(resp, cap, &used, report);
@@ -923,6 +944,7 @@ static void write_report_response(char *resp, size_t cap, const Report *report) 
     }
 }
 
+// Fetches and returns full details for a requested report ID.
 static void process_report_detail(const char *msg, char *resp, size_t cap) {
     const char *id = msg + 7;
     if (!valid_report_field(id, 19)) {
@@ -937,6 +959,7 @@ static void process_report_detail(const char *msg, char *resp, size_t cap) {
         snprintf(resp, cap, "{\"ok\":false,\"error\":\"Report not found\"}");
 }
 
+// Updates the lifecycle status of a specific report record.
 static void process_report_status(const char *msg, char *resp, size_t cap) {
     char fields[MAX_MSG + 1];
     char *id, *status;
@@ -968,7 +991,7 @@ invalid:
     snprintf(resp, cap, "{\"ok\":false,\"error\":\"Invalid report status request\"}");
 }
 
-// builds the reply in resp; returns 1 if the client asked to quit
+// Dispatches an incoming TCP command to the appropriate handler.
 static int process(const char *msg, char *resp, size_t n) {
     if (!strncmp(msg, "REPORT_V3|", 10)) {
         return process_report_v3(msg, resp, n);
@@ -1030,6 +1053,7 @@ static int process(const char *msg, char *resp, size_t n) {
     return 0;
 }
 
+// Thread function that listens for incoming UDP alert datagrams.
 static DWORD WINAPI udp_handler(LPVOID unused) {
     (void)unused;
     while (running) {
@@ -1165,7 +1189,7 @@ static DWORD WINAPI udp_handler(LPVOID unused) {
     return 0;
 }
 
-// one of these runs per connected client
+// Thread function that manages communication with a connected TCP client.
 static DWORD WINAPI handler(LPVOID p) {
     Client *c = (Client *)p;
     int client_id = c->id;
@@ -1207,7 +1231,7 @@ static DWORD WINAPI handler(LPVOID p) {
     return 0;
 }
 
-// stop accepting new clients (safe to call more than once)
+// Signals server shutdown and closes active listening sockets.
 static void stop_server(void) {
     if (InterlockedExchange(&running, 0)) {
         if (listen_sock != INVALID_SOCKET) closesocket(listen_sock);
@@ -1215,6 +1239,7 @@ static void stop_server(void) {
     }
 }
 
+// Handles console interruption signals to initiate graceful server shutdown.
 static BOOL WINAPI on_ctrl(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT) {
         slog("Ctrl+C received, shutting down...");
@@ -1224,6 +1249,7 @@ static BOOL WINAPI on_ctrl(DWORD type) {
     return FALSE;
 }
 
+// Initializes sockets, starts worker threads, and accepts TCP connections.
 int main(void) {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { printf("WSAStartup failed\n"); return 1; }

@@ -15,6 +15,7 @@
 #define UDP_PORT 9091
 #define MAX_LINE 1024
 
+// Sends the complete byte buffer over a TCP socket.
 static int send_all(SOCKET sock, const char *data, int length) {
     int sent = 0;
     while (sent < length) {
@@ -25,6 +26,7 @@ static int send_all(SOCKET sock, const char *data, int length) {
     return 1;
 }
 
+// Receives characters from a TCP socket until a newline is reached.
 static int recv_line(SOCKET sock, char *out, int capacity) {
     int used = 0;
     while (used + 1 < capacity) {
@@ -41,6 +43,7 @@ static int recv_line(SOCKET sock, char *out, int capacity) {
     return 0;
 }
 
+// Parses and displays the list of pothole reports in a readable format.
 static int print_report_list(const char *response) {
     const char *cursor = strstr(response, "\"reports\"");
     int report_number = 0;
@@ -98,6 +101,7 @@ static int print_report_list(const char *response) {
     }
 }
 
+// Formats and prints a JSON response string with basic indentation.
 static void print_json_response(const char *title, const char *response) {
     int depth = 0, in_string = 0, escaped = 0;
     const char *cursor = response;
@@ -144,6 +148,7 @@ static void print_json_response(const char *title, const char *response) {
     putchar('\n');
 }
 
+// Prompts the user and reads a required line from standard input.
 static int read_input(const char *prompt, char *out, size_t capacity) {
     printf("%s", prompt);
     fflush(stdout);
@@ -164,6 +169,7 @@ static int read_input(const char *prompt, char *out, size_t capacity) {
     return 1;
 }
 
+// Prompts the user and reads an optional line from standard input.
 static int read_optional_input(const char *prompt, char *out, size_t capacity) {
     printf("%s", prompt);
     fflush(stdout);
@@ -183,6 +189,7 @@ static int read_optional_input(const char *prompt, char *out, size_t capacity) {
     return 1;
 }
 
+// Sends a datagram to the UDP server and waits for a response.
 static int send_udp_request(const char *host, const char *message,
                             char *response, size_t response_capacity,
                             int *error_code) {
@@ -235,6 +242,7 @@ static int send_udp_request(const char *host, const char *message,
     return 1;
 }
 
+// Connects to the server and runs the interactive command-line interface.
 int main(int argc, char *argv[]) {
     const char *host = argc > 1 ? argv[1] : "127.0.0.1";
     WSADATA wsa;

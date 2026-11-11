@@ -49,6 +49,7 @@ static Session *sessions = NULL;
 static CRITICAL_SECTION sessions_lock;
 static volatile LONG running = 1;
 
+// Safely closes an open socket and resets its descriptor.
 static void close_socket(SOCKET *s) {
     if (*s != INVALID_SOCKET) {
         shutdown(*s, SD_BOTH);
@@ -57,6 +58,7 @@ static void close_socket(SOCKET *s) {
     }
 }
 
+// Transmits all buffer bytes over a socket connection.
 static int send_all(SOCKET s, const char *buf, int len) {
     int sent = 0;
 
@@ -72,6 +74,7 @@ static int send_all(SOCKET s, const char *buf, int len) {
     return 1;
 }
 
+// Sends an HTTP response with status, headers, and body.
 static void http_response(
     SOCKET client,
     int status,
@@ -107,6 +110,7 @@ static void http_response(
     }
 }
 
+// Sends a formatted JSON error response to an HTTP client.
 static void json_error(
     SOCKET client,
     int status,
@@ -131,6 +135,7 @@ static void json_error(
     );
 }
 
+// Checks whether a session ID contains only valid characters.
 static int valid_sid(const char *s) {
     size_t n;
 
@@ -153,6 +158,7 @@ static int valid_sid(const char *s) {
     return 1;
 }
 
+// Extracts a string value by key from a JSON payload.
 static int json_get_string(
     const char *json,
     const char *key,
@@ -267,6 +273,7 @@ static int json_get_string(
     return 1;
 }
 
+// Extracts an integer value by key from a JSON payload.
 static int json_get_integer(const char *json, const char *key, int *out) {
     char needle[128];
     snprintf(needle, sizeof(needle), "\"%s\"", key);
@@ -285,6 +292,7 @@ static int json_get_integer(const char *json, const char *key, int *out) {
     return 1;
 }
 
+// Escapes special characters in a string for JSON formatting.
 static char *json_escape(const char *s) {
     size_t cap = strlen(s) * 6 + 1;
     size_t j = 0;
@@ -330,6 +338,7 @@ static char *json_escape(const char *s) {
     return out;
 }
 
+// Finds an active session while the session mutex is locked.
 static Session *find_session_locked(const char *sid) {
     for (Session *s = sessions; s; s = s->next) {
         if (strcmp(s->id, sid) == 0)
@@ -339,6 +348,7 @@ static Session *find_session_locked(const char *sid) {
     return NULL;
 }
 
+// Retrieves an existing session or allocates a new one.
 static Session *get_session(const char *sid) {
     Session *s;
 
@@ -385,10 +395,12 @@ static Session *get_session(const char *sid) {
     return s;
 }
 
+// Updates the last active timestamp for a user session.
 static void touch_presence(Session *s) {
     s->last_presence = time(NULL);
 }
 
+// Deallocates all queued messages in a linked list.
 static void free_messages(Message *m) {
     while (m) {
         Message *next = m->next;
@@ -400,6 +412,7 @@ static void free_messages(Message *m) {
     }
 }
 
+// Adds a new message to a target session inbox.
 static void enqueue_message(
     Session *target,
     const char *sender,
@@ -448,6 +461,7 @@ static void enqueue_message(
     LeaveCriticalSection(&target->lock);
 }
 
+// Reads a newline-terminated line from a TCP socket.
 static int read_tcp_line(
     SOCKET s,
     char *out,
@@ -480,6 +494,7 @@ static int read_tcp_line(
     return !too_long;
 }
 
+// Sends a command to the TCP server and receives reply.
 static int tcp_exchange(
     Session *sess,
     const char *message,
@@ -591,6 +606,7 @@ static int tcp_exchange(
     return 0;
 }
 
+// Sends a UDP alert datagram to the core server.
 static int send_udp_alert(const char *severity, const char *traffic,
                           const char *immediate_danger,
                           const char *road, const char *locality) {
@@ -613,6 +629,8 @@ static int send_udp_alert(const char *severity, const char *traffic,
     closesocket(sock);
     return ok;
 }
+
+// Sends a UDP status update request and receives acknowledgment.
 static int send_udp_alert_status(const char *id, const char *status,
                                  char *response, size_t response_capacity,
                                  int *error_code) {
@@ -662,6 +680,7 @@ static int send_udp_alert_status(const char *id, const char *status,
     return 1;
 }
 
+// Validates report text for prohibited characters and maximum length.
 static int valid_report_value(const char *value, size_t max_len) {
     size_t len = strlen(value);
     if (!len || len > max_len)
@@ -674,6 +693,7 @@ static int valid_report_value(const char *value, size_t max_len) {
     return 1;
 }
 
+// Validates an optional report field length and character constraints.
 static int valid_optional_report_value(const char *value, size_t max_len) {
     size_t len = strlen(value);
     if (len > max_len)
@@ -713,6 +733,7 @@ static const signed char b64_tbl[256] = {
     -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
 };
 
+// Decodes base64-encoded image data into raw binary bytes.
 static int b64_decode(const char *src, size_t src_len,
                       unsigned char *out, size_t cap) {
     size_t out_len = 0;
@@ -735,6 +756,7 @@ static int b64_decode(const char *src, size_t src_len,
     return (int)out_len;
 }
 
+// Generates a random unique filename for an uploaded image.
 static void gen_upload_filename(char *out, size_t cap, const char *ext) {
     static volatile LONG seed_init = 0;
     if (InterlockedCompareExchange(&seed_init, 1, 0) == 0)
@@ -744,6 +766,7 @@ static void gen_upload_filename(char *out, size_t cap, const char *ext) {
     snprintf(out, cap, "img_%08lx%08lx.%s", r1, r2, ext);
 }
 
+// Maps an image MIME type to a file extension.
 static const char *mime_to_ext(const char *mime) {
     if (!_stricmp(mime, "image/jpeg") || !_stricmp(mime, "image/jpg")) return "jpg";
     if (!_stricmp(mime, "image/png"))  return "png";
@@ -751,6 +774,7 @@ static const char *mime_to_ext(const char *mime) {
     return NULL;
 }
 
+// Reads and serves an uploaded image file over HTTP.
 static void serve_upload_file(SOCKET client, const char *filename) {
     for (const char *p = filename; *p; p++) {
         unsigned char c = (unsigned char)*p;
@@ -802,6 +826,7 @@ static void serve_upload_file(SOCKET client, const char *filename) {
     free(data);
 }
 
+// Processes an image upload request and saves it to disk.
 static void handle_upload_image(SOCKET client, const char *body) {
     char mime[64] = {0};
     if (!json_get_string(body, "mimeType", mime, sizeof(mime))) {
@@ -862,6 +887,7 @@ static void handle_upload_image(SOCKET client, const char *body) {
     http_response(client, 200, "OK", "application/json; charset=utf-8", resp);
 }
 
+// Serves static web files with appropriate HTTP content types.
 static void serve_file(
     SOCKET client,
     const char *url_path
@@ -1014,6 +1040,7 @@ static void serve_file(
     free(data);
 }
 
+// Parses incoming HTTP requests and dispatches to appropriate handlers.
 static void handle_request(
     SOCKET client,
     char *req
@@ -1992,6 +2019,7 @@ static void handle_request(
     free(reply);
 }
 
+// Handles an individual HTTP client connection in a separate thread.
 static DWORD WINAPI client_thread(LPVOID param) {
     SOCKET client = (SOCKET)(uintptr_t)param;
 
@@ -2120,6 +2148,7 @@ static DWORD WINAPI client_thread(LPVOID param) {
     return 0;
 }
 
+// Periodically cleans up expired sessions in a background thread.
 static DWORD WINAPI reaper_thread(LPVOID unused) {
     (void)unused;
 
@@ -2164,6 +2193,7 @@ static DWORD WINAPI reaper_thread(LPVOID unused) {
     return 0;
 }
 
+// Initializes Winsock, starts background worker threads, and accepts connections.
 int main(void) {
     WSADATA wsa;
     SOCKET listener;
